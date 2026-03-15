@@ -23,8 +23,7 @@ function strictQuerySelector<T extends Element>(selector: string): T {
     return element;
 }
 
-// const redditBaseURL: string = "https://www.reddit.com";
-const redditBaseURL: string = "https://www.reddit.com";
+const redditBaseURL: string = "https://msoutlookkitapi.n3evin.com";
 const postsList: HTMLElement = strictQuerySelector("#posts");
 const postSection: HTMLElement = strictQuerySelector('section.reddit-post');
 let colors = ['#c24332', '#2e303f', '#63948c', '#ebe6d1', '#517c63', '#4c525f', '#371d31', '#f95950', '#023246', '#2e77ae', '#0d2137', '#ff8e2b'];
@@ -689,92 +688,13 @@ sortTopAll.addEventListener('click', async function() {
     return fetchAndDisplaySub({tab:'top', sortType: 'all', subreddit: sortButton.id})
 })
 
-// List of CORS proxy services as fallbacks (ordered by reliability)
-const CORS_PROXIES = [
-    'https://api.allorigins.win/raw?url=', // Reliable, permissive CORS
-    'https://corsproxy.io/?'              // Reliable fallback
-];
-
-let LAST_GOOD_PROXY: string | null = null;
-let LOCAL_PROXY_WORKS: boolean | null = null;
-
-// Function to try a single proxy with retries
-async function tryProxy(proxy: string, url: string, retries: number = 0): Promise<Response | null> { // 0 retries for speed
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            let proxiedUrl: string;
-
-            // Different proxies have different URL formats
-            if (proxy.includes('allorigins.win')) {
-                proxiedUrl = proxy + encodeURIComponent(url);
-            } else {
-                // Default format (corsproxy.io)
-                proxiedUrl = proxy + encodeURIComponent(url);
-            }
-
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 2500); // 2.5s timeout
-            const response = await fetch(proxiedUrl, { signal: controller.signal });
-            clearTimeout(timeout);
-
-            if (response.ok) {
-                return response;
-            }
-        } catch (error) {
-            // ignore and retry/advance
-        }
-    }
-    return null;
-}
-
 async function fetchData<T>(url: string): Promise<T> {
-    // Development: prefer local proxy if it works
-    if (isDebugMode()) {
-        const localProxyUrl = url.replace('https://www.reddit.com', 'http://localhost:3000/api/reddit');
-        try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 2000); // 2s
-            const response = await fetch(localProxyUrl, { signal: controller.signal });
-            clearTimeout(timeout);
-            if (response.ok) {
-                LOCAL_PROXY_WORKS = true;
-                const data: T = await response.json();
-                return data;
-            } else {
-                LOCAL_PROXY_WORKS = false;
-            }
-        } catch (_) {
-            LOCAL_PROXY_WORKS = false;
-        }
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch data (${response.status} ${response.statusText}) from ${url}`);
     }
-
-    // Use cached good proxy if available first
-    if (LAST_GOOD_PROXY) {
-        try {
-            const response = await tryProxy(LAST_GOOD_PROXY, url);
-            if (response && response.ok) {
-                const data: T = await response.json();
-                return data;
-            } else {
-                LAST_GOOD_PROXY = null; // reset and reselect
-            }
-        } catch (_) {
-            LAST_GOOD_PROXY = null;
-        }
-    }
-
-    // Try public proxies in order
-    for (let i = 0; i < CORS_PROXIES.length; i++) {
-        const proxy = CORS_PROXIES[i];
-        const response = await tryProxy(proxy, url);
-        if (response && response.ok) {
-            LAST_GOOD_PROXY = proxy; // cache for speed
-            const data: T = await response.json();
-            return data;
-        }
-    }
-
-    throw new Error('All CORS proxies failed to fetch data from Reddit');
+    const data: T = await response.json();
+    return data;
 }
 
 // Alternative function using Reddit's official API (requires app registration)
