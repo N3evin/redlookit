@@ -905,6 +905,18 @@ function isSelfPost(post: Post) {
     return post.data.is_self;
 }
 
+function isValidAbsoluteImageURL(value: string | undefined): boolean {
+    if (typeof value !== "string" || value.trim() === "") {
+        return false;
+    }
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+        return false;
+    }
+}
+
 function hasSelfText(post: Post) {
     return typeof post.data.selftext == "string" && post.data.selftext !== "";
 }
@@ -1008,7 +1020,11 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
         const thumbnail = document.createElement('img');
         const link = document.createElement('a');
 
-        thumbnail.src = post.data.thumbnail;
+        if (isValidAbsoluteImageURL(post.data.thumbnail)) {
+            thumbnail.src = post.data.thumbnail;
+        } else {
+            thumbnail.src = 'https://img.icons8.com/3d-fluency/512/news.png';
+        }
         thumbnail.onerror = () => {
             thumbnail.src = 'https://img.icons8.com/3d-fluency/512/news.png';
         };
@@ -1498,13 +1514,18 @@ function setDarkMode() {
 
 const checkbox2: HTMLInputElement = strictQuerySelector('#show-subreddit-details');
 checkbox2.addEventListener('change', function() {
+    const subredditInfoElement = document.querySelector('.subreddit-info') as HTMLElement | null;
     if (checkbox2.checked) {
         localStorage.setItem('showSubDetails', 'true');
-        (document.querySelector('.subreddit-info') as HTMLElement).style.display = 'flex';
+        if (subredditInfoElement) {
+            subredditInfoElement.style.display = 'flex';
+        }
         scrollable.style.height = 'calc(100vh - 273px)';
     } else {
         localStorage.setItem('showSubDetails', 'false');
-        (document.querySelector('.subreddit-info') as HTMLElement).style.display = 'none';
+        if (subredditInfoElement) {
+            subredditInfoElement.style.display = 'none';
+        }
         subredditInfoContainer.style.display = 'none';
         headerButtons.style.borderRadius = "4px 4px 0px 0px";
         scrollable.style.height = 'calc(100vh - 178px)';
