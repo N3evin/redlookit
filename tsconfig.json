@@ -5,7 +5,8 @@
     "allowSyntheticDefaultImports": true,
     "strict": false,
     "sourceMap": true,
-    "module": "es6",
+    "module": "es2020",
+    "moduleResolution": "node",
     "target": "es6",
     "lib": [
       "dom",
@@ -15,6 +16,10 @@
   },
   "files": [
     "src/redlookit.ts",
+    "src/domUtils.ts",
+    "src/mediaUtils.ts",
+    "src/networkUtils.ts",
+    "src/voteUtils.ts",
     "src/subredditList.ts",
     "src/random.ts",
     "src/facesSideloader.ts",
