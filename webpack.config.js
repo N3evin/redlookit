@@ -1,22 +1,9 @@
 // Generated using webpack-cli https://github.com/webpack/webpack-cli
 const path = require('path');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
-const pkg = require('./package.json');
 // const HtmlPlugin = require('html-webpack-plugin');
 const isProduction = process.env.NODE_ENV == 'production';
 let stylesHandler = isProduction ? MiniCssExtractPlugin.loader : 'style-loader';
-
-function getPublicPathFromHomepage(homepage) {
-    if (!homepage) return '/';
-    try {
-        const pathname = new URL(homepage).pathname || '/';
-        return pathname.endsWith('/') ? pathname : `${pathname}/`;
-    } catch (e) {
-        return '/';
-    }
-}
-
-const publicPath = isProduction ? getPublicPathFromHomepage(pkg.homepage) : '/';
 
 const config = {
     entry: './src/redlookit.ts',
@@ -24,7 +11,7 @@ const config = {
         path: path.resolve(__dirname, 'public'),
         filename: 'js/bundle.min.js',
         chunkFilename: 'js/chunk-[name].bundle.min.js',
-        publicPath,
+        publicPath: 'auto',
     },
     devServer: {
         open: true,

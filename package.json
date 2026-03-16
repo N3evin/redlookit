@@ -9,6 +9,7 @@
     "dev": "webpack --mode=development",
     "prod": "webpack --mode=production --define-process-env-node-env=production",
     "watch": "webpack --watch",
+    "predeploy": "npm run build",
     "deploy": "gh-pages -d public",
     "server": "node server.js"
   },
