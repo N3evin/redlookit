@@ -1705,6 +1705,7 @@ type SearchSubredditRecord = {
 
 let indexedSubredditsCache: SearchSubredditRecord[] | null = null;
 let indexedSubredditsPromise: Promise<SearchSubredditRecord[]> | null = null;
+const remoteSearchCache = new Map<string, SearchSubredditRecord[]>();
 let latestSearchToken = 0;
 
 async function getIndexedSubreddits(): Promise<SearchSubredditRecord[]> {
@@ -1730,6 +1731,48 @@ async function getIndexedSubreddits(): Promise<SearchSubredditRecord[]> {
     return indexedSubredditsPromise;
 }
 
+async function fetchRemoteSubredditSearch(query: string, limit: number = 5): Promise<SearchSubredditRecord[] | null> {
+    const cached = remoteSearchCache.get(query);
+    if (cached !== undefined) {
+        return cached;
+    }
+
+    try {
+        const searchUrl = `${redditBaseURL}/subreddits/search.json?limit=${limit}&include_over_18=on&q=${encodeURIComponent(query)}`;
+        const payload = await fetchData<{ data?: { children?: Array<{ data?: SubredditDetails }> } }>(searchUrl);
+        const children = payload?.data?.children || [];
+        const results: SearchSubredditRecord[] = [];
+        const seen = new Set<string>();
+        for (const child of children) {
+            const details = child?.data;
+            if (!details || typeof details.display_name !== "string" || details.display_name.length === 0) {
+                continue;
+            }
+            const subredditLower = details.display_name.toLowerCase();
+            if (seen.has(subredditLower)) {
+                continue;
+            }
+            seen.add(subredditLower);
+            const rawIcon = getSubredditIcon(details);
+            results.push({
+                subreddit: details.display_name,
+                subredditLower,
+                members: details.subscribers || 0,
+                icon: typeof rawIcon === "string" && rawIcon.length > 0
+                    ? rawIcon
+                    : 'https://img.icons8.com/fluency-systems-regular/512/reddit.png',
+            });
+            if (results.length >= limit) {
+                break;
+            }
+        }
+        remoteSearchCache.set(query, results);
+        return results;
+    } catch (_) {
+        return null;
+    }
+}
+
 async function runSubredditSearch(rawInput: string): Promise<void> {
     const searchToken = ++latestSearchToken;
     const normalized = rawInput.toLowerCase();
@@ -1744,22 +1787,34 @@ async function runSubredditSearch(rawInput: string): Promise<void> {
         return;
     }
 
+    const remoteResults = await fetchRemoteSubredditSearch(query, 5);
+    if (searchToken !== latestSearchToken) {
+        return;
+    }
+
+    if (remoteResults !== null && remoteResults.length > 0) {
+        displaySearchResults(remoteResults);
+        return;
+    }
+
+    // Backup mode: local static list when remote search is empty/unavailable.
     const indexedSubreddits = await getIndexedSubreddits();
     if (searchToken !== latestSearchToken) {
         return;
     }
 
-    const results: SearchSubredditRecord[] = [];
+    const fallbackResults: SearchSubredditRecord[] = [];
     for (const sub of indexedSubreddits) {
         if (!sub.subredditLower.includes(query)) {
             continue;
         }
-        results.push(sub);
-        if (results.length >= 5) {
+        fallbackResults.push(sub);
+        if (fallbackResults.length >= 5) {
             break;
         }
     }
-    displaySearchResults(results);
+
+    displaySearchResults(fallbackResults);
 }
 
 const debouncedRunSubredditSearch = debounce(runSubredditSearch, 120);
