@@ -1679,7 +1679,7 @@ async function getIndexedSubreddits(): Promise<SearchSubredditRecord[]> {
         return indexedSubredditsPromise;
     }
 
-    indexedSubredditsPromise = import("./subredditList").then((module) => {
+    indexedSubredditsPromise = import(/* webpackChunkName: "subreddit-list" */ "./subredditList").then((module) => {
         const indexed = module.subreddits.map((subredditData) => ({
             subreddit: subredditData.subreddit,
             subredditLower: subredditData.subreddit.toLowerCase(),
