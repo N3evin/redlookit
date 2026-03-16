@@ -42,9 +42,7 @@ menuButton!.addEventListener('click', () => {
 })
 
 const facesSideLoader = new HumanFacesSideLoader(0);
-for (let i = 0; i < 50; i++) { // reduced from 200 for performance
-    facesSideLoader.sideLoad().catch();
-}
+facesSideLoader.sideLoadMany(50, 6).catch();
 
 const rng = new Random();
 
@@ -915,7 +913,7 @@ function isValidAbsoluteImageURL(value: string | undefined): boolean {
             return false;
         }
         // Some Reddit preview hosts frequently reject hotlinked image fetches.
-        if (parsed.hostname === "external-preview.redd.it") {
+        if (parsed.hostname === "external-preview.redd.it" || parsed.hostname === "preview.redd.it") {
             return false;
         }
         return true;
@@ -930,6 +928,14 @@ function hasSelfText(post: Post) {
 
 function createImage(src: string) {
     if (isMediaHidden()) {
+        return;
+    }
+    try {
+        const parsed = new URL(src);
+        if (parsed.hostname === "external-preview.redd.it" || parsed.hostname === "preview.redd.it") {
+            return;
+        }
+    } catch {
         return;
     }
     let image = document.createElement('img');
@@ -1015,7 +1021,9 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
     if (isImage(post)) {
         if (isDebugMode()) console.log("Post is image");
         const image = createImage(post.data.url_overridden_by_dest);
-        container.append(image);
+        if (image) {
+            container.append(image);
+        }
     } 
     else if (isSelfPost(post)) {
         if (isDebugMode()) console.log("Post is self post");

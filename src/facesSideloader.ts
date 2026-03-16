@@ -45,6 +45,8 @@ export class HumanFacesSideLoader {
     _promises: Promise<HTMLImageElement>[] = [];
     _tasks: TimedTask[] = [];
     _currentID: number = 0;
+    maxConcurrentRequests: number = 6;
+    minConcurrentRequests: number = 2;
     timeBetweenRequestsMS: Milliseconds = 1000;
     timeout: Milliseconds = 3000;
 
@@ -114,6 +116,98 @@ export class HumanFacesSideLoader {
         return Promise.all<HTMLImageElement>(this._promises);
     }
 
+    private createFaceLoadPromise(id: number): Promise<HTMLImageElement> {
+        const prom = new Promise<HTMLImageElement>( (resolve, reject) => {
+            let ppElem = document.createElement("img");
+            let timeoutTask: TimedTask;
+
+            const onBoth = () => {
+                if (timeoutTask) {
+                    timeoutTask.cancel();
+                }
+            };
+            const onSuccess = () => {
+                onBoth();
+                resolve(ppElem);
+                this._faces.push(ppElem);
+            };
+            const onError = () => {
+                onBoth();
+                ppElem.remove();
+                reject();
+            };
+
+            ppElem.src = `${API_URL}?cnh=${id}`;
+
+            timeoutTask = new TimedTask(() => {
+                ppElem.removeEventListener("load", onSuccess);
+                ppElem.removeEventListener("error", onError);
+                onError();
+            }, this.timeout);
+
+            ppElem.addEventListener("load", onSuccess, {once: true, passive: true});
+            ppElem.addEventListener("error", onError, {once: true, passive: true});
+        });
+
+        this._promises.push(prom);
+        return prom;
+    }
+
+    // Load many faces concurrently with a safe upper bound.
+    // Concurrency auto-adjusts based on recent success/failure ratio.
+    async sideLoadMany(totalFaces: number, maxConcurrentRequests: number = this.maxConcurrentRequests): Promise<HTMLImageElement[]> {
+        if (totalFaces <= 0) {
+            return [];
+        }
+
+        const maxConcurrency = Math.max(1, Math.min(maxConcurrentRequests, totalFaces));
+        const minConcurrency = Math.max(1, Math.min(this.minConcurrentRequests, maxConcurrency));
+        const loadedFaces: HTMLImageElement[] = [];
+        let issued = 0;
+        let currentConcurrency = minConcurrency;
+
+        while (issued < totalFaces) {
+            const remaining = totalFaces - issued;
+            const batchSize = Math.min(currentConcurrency, remaining);
+            const batch: Promise<boolean>[] = [];
+
+            for (let i = 0; i < batchSize; i++) {
+                const id = this._currentID;
+                this._currentID++;
+                issued++;
+
+                const oneRequest = this.createFaceLoadPromise(id)
+                    .then((face) => {
+                        loadedFaces.push(face);
+                        return true;
+                    })
+                    .catch(() => {
+                        // Ignore failed single fetches; caller only needs best-effort warmup.
+                        return false;
+                    });
+
+                batch.push(oneRequest);
+            }
+
+            const results = await Promise.all(batch);
+            const successes = results.filter((ok) => ok).length;
+            const failures = batchSize - successes;
+
+            // If the whole batch is healthy, ramp up gradually.
+            if (failures === 0 && currentConcurrency < maxConcurrency) {
+                currentConcurrency++;
+                continue;
+            }
+
+            // If more than half failed, back off quickly.
+            if (failures > Math.floor(batchSize / 2) && currentConcurrency > minConcurrency) {
+                currentConcurrency--;
+            }
+        }
+
+        return loadedFaces;
+    }
+
     async sideLoad(): Promise<HTMLImageElement> {
         let timeToStart = 0; // Now
 
@@ -137,60 +231,19 @@ export class HumanFacesSideLoader {
             const id = this._currentID; // Make a local copy of the value otherwise it will have changed post-return
 
             const task = new TimedTask(() => {
-                let ppElem = document.createElement("img");
-                let timeoutTask: TimedTask;
-
-                const onBoth = () => {
-                    if (timeoutTask) {
-                        timeoutTask.cancel();
-                    }
-                }
-                const onSuccess = () => {
-                    onBoth();
-                    resolve(ppElem);
-                    this._faces.push(ppElem)
-                }
-                const onError = () => {
-                    onBoth();
-                    ppElem.remove();
-                    reject();
-                }
-
-                ppElem.src = `${API_URL}?cnh=${id}`;
-
-                /* From now on this code is being executed while the picture is loading */
-
-
-
-                // If loading the picture is taking too long
-                timeoutTask = new TimedTask(() => {
-                    // User doesn't expect his .then() callback to be entered after a timeout
-                    // or his .catch() callback to be called a second time once the real request gets its error
-                    ppElem.removeEventListener("load", onSuccess);
-                    ppElem.removeEventListener("error", onError);
-
+                this.createFaceLoadPromise(id).then(resolve).catch(() => {
                     // Cancel the requests that are not yet on the way
                     for (const task of this._tasks) {
                         task.cancel();
                     }
-
-                    // We assume the error state should probably be entered in the case of a timeout
-                    // as if the timeout was a real network error
-                    onError();
-                }, this.timeout)
-
-                // If loaded
-                ppElem.addEventListener("load", onSuccess, {once: true, passive: true} /* (performance options) */);
-
-                // If error
-                ppElem.addEventListener('error', onError, {once: true, passive: true} /* (performance options) */);
+                    reject();
+                });
             }, timeToStart);
 
             this._tasks.push(task);
         });
 
         this._currentID++;
-        this._promises.push(prom);
         return prom;
     }
 }
