@@ -125,6 +125,36 @@ button {
     cursor: pointer;
 }
 
+.posts-loading-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 10px;
+    border-bottom: 1px solid var(--border-color-2);
+    color: var(--post-color);
+    opacity: 0.9;
+    font-size: 12px;
+}
+
+.posts-loading-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border-color-2);
+    border-top-color: var(--post-color);
+    border-radius: 50%;
+    animation: postsLoadingSpin 0.8s linear infinite;
+}
+
+@keyframes postsLoadingSpin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .focused-post {
     background-color: var(--background-color);
 }

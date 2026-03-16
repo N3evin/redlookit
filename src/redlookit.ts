@@ -95,11 +95,38 @@ function setEndOfFeedMessageVisible(shouldShow: boolean): void {
     postsList.append(message);
 }
 
+function setLoadMoreIndicatorVisible(shouldShow: boolean): void {
+    const existing = postsList.querySelector('[data-load-more-indicator="true"]');
+    if (!shouldShow) {
+        existing?.remove();
+        return;
+    }
+    if (existing !== null) {
+        return;
+    }
+
+    const indicator = document.createElement('div');
+    indicator.dataset.loadMoreIndicator = "true";
+    indicator.classList.add('posts-loading-indicator');
+    indicator.setAttribute("aria-live", "polite");
+
+    const spinner = document.createElement('span');
+    spinner.classList.add('posts-loading-spinner');
+    spinner.setAttribute("aria-hidden", "true");
+
+    const label = document.createElement('span');
+    label.textContent = "Loading more posts...";
+
+    indicator.append(spinner, label);
+    postsList.append(indicator);
+}
+
 function resetSubredditPaging(query: ActiveSubredditQuery): void {
     subredditPagingState.query = query;
     subredditPagingState.after = null;
     subredditPagingState.isLoading = false;
     subredditPagingState.hasMore = true;
+    setLoadMoreIndicatorVisible(false);
     setEndOfFeedMessageVisible(false);
 }
 
@@ -133,6 +160,7 @@ async function loadMorePostsFromSubreddit(): Promise<void> {
     }
 
     subredditPagingState.isLoading = true;
+    setLoadMoreIndicatorVisible(true);
     try {
         const url = buildSubredditListingURL(query, subredditPagingState.after);
         const posts = await fetchData<Listing<Post>>(url);
@@ -145,6 +173,7 @@ async function loadMorePostsFromSubreddit(): Promise<void> {
     } catch (e) {
         console.error(e);
     } finally {
+        setLoadMoreIndicatorVisible(false);
         if (isSameSubredditQuery(subredditPagingState.query, query)) {
             subredditPagingState.isLoading = false;
         }
@@ -424,7 +453,6 @@ function displayPosts(responses: Post[], subreddit, subredditInformation: Subred
         favoriteIcon.id = subreddit;
         if (localStorage.getItem('savedSubreddits')) {
             if (localStorage.getItem('savedSubreddits').toLowerCase().split(',').includes(subreddit.toLowerCase())) {
-                // console.log(`r/${subreddit} in SAVED DATA: ${localStorage.getItem('savedSubreddits')}`)
                 favoriteIcon.innerHTML = '<svg width="16" height="16" class="favorite-icon favorited" viewBox="0 0 176 168" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M89.7935 6.93173L111.277 50.4619C113.025 54.0036 116.404 56.4584 120.312 57.0264L168.351 64.0068C169.991 64.2451 170.646 66.2611 169.459 67.4182L134.698 101.302C131.87 104.058 130.579 108.031 131.247 111.923L139.453 159.767C139.733 161.401 138.018 162.647 136.551 161.876L93.5841 139.287C90.0882 137.449 85.9118 137.449 82.4159 139.287L39.4491 161.876C37.9818 162.647 36.267 161.401 36.5472 159.768L44.7531 111.923C45.4208 108.031 44.1302 104.059 41.302 101.302L6.54106 67.4182C5.35402 66.2611 6.00905 64.2451 7.64948 64.0068L55.6879 57.0264C59.5964 56.4584 62.9752 54.0036 64.7231 50.4619L86.2065 6.93174C86.9402 5.44523 89.0599 5.44525 89.7935 6.93173Z"/></svg>'
             } else {
                 favoriteIcon.innerHTML = '<svg width="16" height="16" class="favorite-icon" viewBox="0 0 176 168" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M89.7935 6.93173L111.277 50.4619C113.025 54.0036 116.404 56.4584 120.312 57.0264L168.351 64.0068C169.991 64.2451 170.646 66.2611 169.459 67.4182L134.698 101.302C131.87 104.058 130.579 108.031 131.247 111.923L139.453 159.767C139.733 161.401 138.018 162.647 136.551 161.876L93.5841 139.287C90.0882 137.449 85.9118 137.449 82.4159 139.287L39.4491 161.876C37.9818 162.647 36.267 161.401 36.5472 159.768L44.7531 111.923C45.4208 108.031 44.1302 104.059 41.302 101.302L6.54106 67.4182C5.35402 66.2611 6.00905 64.2451 7.64948 64.0068L55.6879 57.0264C59.5964 56.4584 62.9752 54.0036 64.7231 50.4619L86.2065 6.93174C86.9402 5.44523 89.0599 5.44525 89.7935 6.93173Z"/></svg>'
@@ -526,17 +554,14 @@ favoriteIcon.addEventListener('click', function() {
     let favorited = favoriteIconClasses.contains('favorited');
     if (!favorited) {
         favoriteIconClasses.add('favorited');
-        // console.log(`favoriting ${favoriteIcon.id}`)
         favoriteSubreddit(favoriteIcon.id);
     } else {
         favoriteIconClasses.remove('favorited');
-        // console.log(`unfavoriting ${favoriteIcon.id}`)
         unFavoriteSubreddit(favoriteIcon.id);
     }
 })
 
 function favoriteSubreddit(subreddit) {
-    // console.log(`Favoriting r/${subreddit}`);
     let subredditBtn: HTMLButtonElement = document.createElement<"button">('button');
     subredditBtn.classList.add('subreddit', 'button');
     subredditBtn.id = subreddit;
@@ -546,28 +571,22 @@ function favoriteSubreddit(subreddit) {
         setURLAnchor(`/r/${subredditBtn.id}`);
         showSubreddit(subredditBtn.id);
     })
-    // document.cookie.subreddits.append(subreddit.value);
     if (localStorage.getItem('savedSubreddits')) {
         let savedSubreddits = localStorage.getItem('savedSubreddits');
         savedSubreddits += `,${subreddit}`;
         localStorage.setItem('savedSubreddits', savedSubreddits);
-        // console.log(`Favorited r/${subreddit}`)
     } else {
         localStorage.setItem('savedSubreddits', subreddit);
-        // console.log(`Favorited r/${subreddit}`)
     }
     subredditBtn.append('r/' + subreddit);
     subredditSection.append(subredditBtn);
 }
 
 function unFavoriteSubreddit(subreddit) {
-    // console.log(`Unfavoriting r/${subreddit}`);
     document.querySelector(`.your-subreddits .subreddit.button#${subreddit}`).remove();
     let savedSubreddits = localStorage.getItem('savedSubreddits');
     let newSavedSubreddits = savedSubreddits.split(',').filter(e => e !== subreddit);
-    // console.log(newSavedSubreddits);
     localStorage.setItem('savedSubreddits', newSavedSubreddits.toString());
-    // console.log(localStorage.getItem('savedSubreddits'));
 }
 
 type CommentBuilderOptions = {
@@ -669,7 +688,6 @@ let sortButton = document.querySelector('.post-header-button.sort') as HTMLEleme
 let sortMenu = document.querySelector('.sort-menu') as HTMLElement;
 
 sortButton.addEventListener('click', function() {
-    // console.log(sortMenu.style.display)
     if (sortMenu.style.display == 'none' || sortMenu.style.display == '') {
         // sortButton.style.backgroundColor = '#000';
         sortButton.classList.add('opened');
@@ -721,7 +739,6 @@ let themes = document.querySelector('.theme-grid-container') as HTMLElement;
 for (let theme of themes.children) {
     theme.addEventListener('click', function() {
         let themeName = theme.classList[1];
-        // console.log('APPLYING THEME:', themeName);
         removeThemeSelected()
         document.body.classList.remove(...themeNames);
         if (!theme.classList.contains('selected')) {
@@ -1042,7 +1059,6 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
 }
 
 document.body.addEventListener('keydown', (event) => {
-    // console.log(event.key)
     if (event.key === 'Escape') {
         clearPostSection();
     }
@@ -1306,6 +1322,7 @@ function clearPostsList() {
     const posts = document.querySelector('#posts');
     if (posts !== null) {
         posts.innerHTML = '';
+        setLoadMoreIndicatorVisible(false);
         setEndOfFeedMessageVisible(false);
         subredditInfoContainer.style.display = 'none';
         headerButtons.style.borderRadius = "4px 4px 0px 0px";
@@ -1325,7 +1342,6 @@ searchForm.addEventListener('submit', async (event) => {
     // subredditBtn.id = subredditName.value;
     // subredditBtn.addEventListener('click', async () => {
     //     clearPost();
-    //     if (isDebugMode()) console.log("custom sub click", subredditBtn.id);
     //     setURLAnchor(`/r/${subredditBtn.id}`);
     //     showSubreddit(subredditBtn.id);
     // })
@@ -1365,7 +1381,6 @@ function displaySavedSubreddits() {
 
 function getSavedSubreddits() {
     if (localStorage.getItem('savedSubreddits')) {
-        // console.log(localStorage.getItem('savedSubreddits'));
         let savedSubreddits = localStorage.getItem('savedSubreddits');
         return savedSubreddits.split(',');
     } else {
@@ -1613,8 +1628,6 @@ if (spoilerTexts) {
         spoilerText.addEventListener('click', function () {
             // spoilerText.classList.remove('md-spoiler-text');
             spoilerText.classList.add('hello');
-
-            // console.log('spoiler text clicked');
         });
     }
 }
@@ -1684,7 +1697,6 @@ let inputBox = document.querySelector(".search") as HTMLInputElement;
 if (subredditName) {
     subredditName.addEventListener('input', function() {
     // searchBoxClicked();
-	// console.log(inputBox.value)
 	if (subredditName.value.length > 0) {
         if (subredditName.value.startsWith('r/')) {
             let results = subreddits.filter(sub => sub.subreddit.toLowerCase().includes(inputBox.value.toLowerCase().slice(2)));
@@ -1693,14 +1705,12 @@ if (subredditName) {
             let results = subreddits.filter(sub => sub.subreddit.toLowerCase().includes(inputBox.value.toLowerCase()));
             displaySearchResults(results.slice(0, 5))
         }
-		// console.log(results.slice(0, 5));
 	} else {
 		hideSearchResults()
 	}
   });
 //   subredditName.addEventListener('click', function() {
 //     // searchBoxClicked();
-// 	// console.log(inputBox.value)
 // 	if (subredditName.value.length > 0) {
 //         let results = subreddits.filter(sub => sub.subreddit.toLowerCase().includes(subredditName.value.toLowerCase()));
 // 		displaySearchResults(results.slice(0, 5))
@@ -1726,12 +1736,10 @@ function displaySearchResults(results) {
                     </div>
                 </div>
             </a>`
-        // console.log(searchResultItem)
         let searchResultLinks = document.querySelectorAll('.search-result-link');
 
         for (let searchResultLink of searchResultLinks) {
             searchResultLink.addEventListener('click', function() {
-                console.log('outer button clicked');
                 hideSearchResults();
                 // inputBox.value = '';
                 // let yourSubredditsSection = document.querySelector('.your-subreddits')
