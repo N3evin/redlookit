@@ -911,7 +911,14 @@ function isValidAbsoluteImageURL(value: string | undefined): boolean {
     }
     try {
         const parsed = new URL(value);
-        return parsed.protocol === "http:" || parsed.protocol === "https:";
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            return false;
+        }
+        // Some Reddit preview hosts frequently reject hotlinked image fetches.
+        if (parsed.hostname === "external-preview.redd.it") {
+            return false;
+        }
+        return true;
     } catch {
         return false;
     }
