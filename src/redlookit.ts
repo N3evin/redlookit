@@ -59,11 +59,13 @@ const subredditPagingState: {
     after: string | null
     isLoading: boolean
     hasMore: boolean
+    subredditInformation: SubredditDetails | null
 } = {
     query: null,
     after: null,
     isLoading: false,
-    hasMore: true
+    hasMore: true,
+    subredditInformation: null
 };
 
 function buildSubredditListingURL(query: ActiveSubredditQuery, after: string | null = null): string {
@@ -79,6 +81,16 @@ function buildSubredditListingURL(query: ActiveSubredditQuery, after: string | n
         params.set('after', after);
     }
     return `${base}?${params.toString()}`;
+}
+
+async function fetchSubredditDetails(subreddit: string): Promise<SubredditDetails | null> {
+    try {
+        const url = `${redditBaseURL}/r/${encodeURIComponent(subreddit)}/about.json`;
+        const payload = await fetchData<{ data?: SubredditDetails }>(url);
+        return payload?.data ?? null;
+    } catch (_) {
+        return null;
+    }
 }
 
 function setEndOfFeedMessageVisible(shouldShow: boolean): void {
@@ -127,6 +139,7 @@ function resetSubredditPaging(query: ActiveSubredditQuery): void {
     subredditPagingState.after = null;
     subredditPagingState.isLoading = false;
     subredditPagingState.hasMore = true;
+    subredditPagingState.subredditInformation = null;
     setLoadMoreIndicatorVisible(false);
     setEndOfFeedMessageVisible(false);
 }
@@ -168,7 +181,11 @@ async function loadMorePostsFromSubreddit(): Promise<void> {
         if (!isSameSubredditQuery(subredditPagingState.query, query)) {
             return;
         }
-        displayPosts(posts.data.children, query.subreddit);
+        displayPosts(
+            posts.data.children,
+            query.subreddit,
+            subredditPagingState.subredditInformation === null ? undefined : subredditPagingState.subredditInformation
+        );
         applyPageResultToState(posts);
         maybeLoadMorePostsOnScroll();
     } catch (e) {
@@ -200,11 +217,19 @@ async function loadInitialSubredditPosts(query: ActiveSubredditQuery): Promise<v
     subredditPagingState.isLoading = true;
     try {
         const url = buildSubredditListingURL(query, null);
-        const posts = await fetchData<Listing<Post>>(url);
+        const [posts, subredditInformation] = await Promise.all([
+            fetchData<Listing<Post>>(url),
+            fetchSubredditDetails(query.subreddit)
+        ]);
         if (!isSameSubredditQuery(subredditPagingState.query, query)) {
             return;
         }
-        displayPosts(posts.data.children, query.subreddit);
+        subredditPagingState.subredditInformation = subredditInformation;
+        displayPosts(
+            posts.data.children,
+            query.subreddit,
+            subredditInformation === null ? undefined : subredditInformation
+        );
         applyPageResultToState(posts);
         maybeLoadMorePostsOnScroll();
     } catch (e) {
@@ -1701,6 +1726,7 @@ type SearchSubredditRecord = {
     subredditLower: string;
     members: number;
     icon: string;
+    isNSFW: boolean;
 }
 
 let indexedSubredditsCache: SearchSubredditRecord[] | null = null;
@@ -1722,6 +1748,7 @@ async function getIndexedSubreddits(): Promise<SearchSubredditRecord[]> {
             subredditLower: subredditData.subreddit.toLowerCase(),
             members: parseInt(subredditData.members, 10) || 0,
             icon: subredditData.icon,
+            isNSFW: false,
         }));
         indexedSubredditsCache = indexed;
         indexedSubredditsPromise = null;
@@ -1761,6 +1788,7 @@ async function fetchRemoteSubredditSearch(query: string, limit: number = 5): Pro
                 icon: typeof rawIcon === "string" && rawIcon.length > 0
                     ? rawIcon
                     : 'https://img.icons8.com/fluency-systems-regular/512/reddit.png',
+                isNSFW: details.over18 === true,
             });
             if (results.length >= limit) {
                 break;
@@ -1851,6 +1879,12 @@ function displaySearchResults(results) {
         const name = document.createElement('div');
         name.classList.add('search-result-subreddit-name');
         name.textContent = `r/${result.subreddit}`;
+        if (result.isNSFW) {
+            const nsfwBadge = document.createElement('span');
+            nsfwBadge.classList.add('search-result-nsfw-badge');
+            nsfwBadge.textContent = 'NSFW';
+            name.append(nsfwBadge);
+        }
 
         const members = document.createElement('div');
         members.classList.add('search-result-subreddit-info');

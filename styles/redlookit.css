@@ -1130,6 +1130,13 @@ header {
     font-size: 16px;
 }
 
+.search-result-nsfw-badge {
+    color: #d13438;
+    font-weight: 700;
+    margin-left: 8px;
+    font-size: 12px;
+}
+
 .search-result-subreddit-info {
     color: var(--border-color);
 }
