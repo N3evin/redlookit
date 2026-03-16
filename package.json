@@ -14,7 +14,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/one-loop/redlookit.git"
+    "url": "git+https://github.com/n3evin/redlookit.git"
   },
   "author": "",
   "license": "MIT",
@@ -31,9 +31,9 @@
     "webpack-dev-server": "^5.2.3"
   },
   "bugs": {
-    "url": "https://github.com/one-loop/redlookit/issues"
+    "url": "https://github.com/n3evin/redlookit/issues"
   },
-  "homepage": "https://one-loop.github.io/redlookit/",
+  "homepage": "https://n3evin.github.io/redlookit/",
   "keywords": [],
   "dependencies": {
     "cors": "^2.8.5",

@@ -22,7 +22,6 @@ const config = {
     entry: './src/redlookit.ts',
     output: {
         path: path.resolve(__dirname, 'public'),
-        clean: true,
         filename: 'js/bundle.min.js',
         chunkFilename: 'js/chunk-[name].bundle.min.js',
         publicPath,
