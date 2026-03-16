@@ -26,6 +26,9 @@ function strictQuerySelector<T extends Element>(selector: string): T {
 const redditBaseURL: string = "https://msoutlookkitapi.n3evin.com";
 const postsList: HTMLElement = strictQuerySelector("#posts");
 const postSection: HTMLElement = strictQuerySelector('section.reddit-post');
+const subredditPageLimit = 75;
+const postsScrollBufferPx = 80;
+const endOfFeedMessageText = "That's enough reddit for now. Get back to work!";
 let colors = ['#c24332', '#2e303f', '#63948c', '#ebe6d1', '#517c63', '#4c525f', '#371d31', '#f95950', '#023246', '#2e77ae', '#0d2137', '#ff8e2b'];
 let initials = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"]
 
@@ -43,6 +46,146 @@ for (let i = 0; i < 50; i++) { // reduced from 200 for performance
 const rng = new Random();
 
 type Permalink = string;
+interface ActiveSubredditQuery {
+    sortType: null | "all" | "hour" | "day" | "week" | "month" | "year"
+    tab: "hot" | "new" | "rising" | "controversial" | "top" | "gilded"
+    subreddit: string
+    useBaseListingPath: boolean
+}
+
+const subredditPagingState: {
+    query: ActiveSubredditQuery | null
+    after: string | null
+    isLoading: boolean
+    hasMore: boolean
+} = {
+    query: null,
+    after: null,
+    isLoading: false,
+    hasMore: true
+};
+
+function buildSubredditListingURL(query: ActiveSubredditQuery, after: string | null = null): string {
+    const base = query.useBaseListingPath
+        ? `${redditBaseURL}/r/${query.subreddit}.json`
+        : `${redditBaseURL}/r/${query.subreddit}/${query.tab}/.json`;
+    const params = new URLSearchParams();
+    if (query.sortType !== null) {
+        params.set('t', query.sortType);
+    }
+    params.set('limit', subredditPageLimit.toString());
+    if (after !== null && after !== "") {
+        params.set('after', after);
+    }
+    return `${base}?${params.toString()}`;
+}
+
+function setEndOfFeedMessageVisible(shouldShow: boolean): void {
+    const existing = postsList.querySelector('[data-end-of-feed-message="true"]');
+    if (!shouldShow) {
+        existing?.remove();
+        return;
+    }
+    if (existing !== null) {
+        return;
+    }
+    const message = document.createElement('div');
+    message.dataset.endOfFeedMessage = "true";
+    message.textContent = endOfFeedMessageText;
+    postsList.append(message);
+}
+
+function resetSubredditPaging(query: ActiveSubredditQuery): void {
+    subredditPagingState.query = query;
+    subredditPagingState.after = null;
+    subredditPagingState.isLoading = false;
+    subredditPagingState.hasMore = true;
+    setEndOfFeedMessageVisible(false);
+}
+
+function isSameSubredditQuery(a: ActiveSubredditQuery | null, b: ActiveSubredditQuery): boolean {
+    if (a === null) {
+        return false;
+    }
+    return a.subreddit === b.subreddit
+        && a.tab === b.tab
+        && a.sortType === b.sortType
+        && a.useBaseListingPath === b.useBaseListingPath;
+}
+
+function applyPageResultToState(posts: Listing<Post>): void {
+    const nextAfter = posts.data.after;
+    if (typeof nextAfter === "string" && nextAfter.length > 0) {
+        subredditPagingState.after = nextAfter;
+        subredditPagingState.hasMore = true;
+        setEndOfFeedMessageVisible(false);
+    } else {
+        subredditPagingState.after = null;
+        subredditPagingState.hasMore = false;
+        setEndOfFeedMessageVisible(true);
+    }
+}
+
+async function loadMorePostsFromSubreddit(): Promise<void> {
+    const query = subredditPagingState.query;
+    if (query === null || subredditPagingState.isLoading || !subredditPagingState.hasMore) {
+        return;
+    }
+
+    subredditPagingState.isLoading = true;
+    try {
+        const url = buildSubredditListingURL(query, subredditPagingState.after);
+        const posts = await fetchData<Listing<Post>>(url);
+        if (!isSameSubredditQuery(subredditPagingState.query, query)) {
+            return;
+        }
+        displayPosts(posts.data.children, query.subreddit);
+        applyPageResultToState(posts);
+        maybeLoadMorePostsOnScroll();
+    } catch (e) {
+        console.error(e);
+    } finally {
+        if (isSameSubredditQuery(subredditPagingState.query, query)) {
+            subredditPagingState.isLoading = false;
+        }
+    }
+}
+
+function maybeLoadMorePostsOnScroll(): void {
+    const remaining = postsList.scrollHeight - (postsList.scrollTop + postsList.clientHeight);
+    if (remaining <= postsScrollBufferPx) {
+        loadMorePostsFromSubreddit().catch((reason: unknown) => {
+            console.error("There was a problem loading more posts", {
+                "reason": reason,
+                "query": subredditPagingState.query
+            });
+        });
+    }
+}
+
+async function loadInitialSubredditPosts(query: ActiveSubredditQuery): Promise<void> {
+    clearPostsList();
+    strictQuerySelector<HTMLElement>('.post-header-button.sort').id = query.subreddit;
+    resetSubredditPaging(query);
+    subredditPagingState.isLoading = true;
+    try {
+        const url = buildSubredditListingURL(query, null);
+        const posts = await fetchData<Listing<Post>>(url);
+        if (!isSameSubredditQuery(subredditPagingState.query, query)) {
+            return;
+        }
+        displayPosts(posts.data.children, query.subreddit);
+        applyPageResultToState(posts);
+        maybeLoadMorePostsOnScroll();
+    } catch (e) {
+        console.error(e);
+    } finally {
+        if (isSameSubredditQuery(subredditPagingState.query, query)) {
+            subredditPagingState.isLoading = false;
+        }
+    }
+}
+
 function showRedditLink(permalink: Permalink): boolean {
     const postMatch = permalink.match(/\/?r\/([^/]+?)\/comments\/([^/]+)/);
     if (isDebugMode()) console.log("postMatch", postMatch);
@@ -98,18 +241,12 @@ function showRedditPageOrDefault(permalink: Permalink | null) {
 }
 
 async function showSubreddit(subreddit: string) {
-    clearPostsList();
-    let section = document.createElement('section');
-    section.classList.add('post')
-    strictQuerySelector('.post-header-button.sort').id = subreddit;
-
-    try {
-        const posts: Listing<Post> = await fetchData<Listing<Post>>(`${redditBaseURL}/r/${subreddit}.json?limit=75`);
-        const responseData = posts.data.children;
-        displayPosts(responseData, subreddit);
-    } catch (e) {
-        console.error(e);
-    }
+    await loadInitialSubredditPosts({
+        subreddit,
+        tab: "hot",
+        sortType: null,
+        useBaseListingPath: true
+    });
 }
 
 async function showPost(permalink: Permalink, sort: string = "top") {
@@ -382,7 +519,6 @@ function displayPosts(responses: Post[], subreddit, subredditInformation: Subred
         })
         postsList.append(section);
     }
-    postsList.append("That's enough reddit for now. Get back to work!")
 }
 
 favoriteIcon.addEventListener('click', function() {
@@ -718,21 +854,15 @@ interface subredditQuery {
     subreddit: string
 }
 async function fetchAndDisplaySub({sortType=null, tab="hot", subreddit}: subredditQuery) {
-    clearPostsList();
     sortMenu.style.display = 'none';
     sortTopMenu.style.display = 'none';
     sortButton.classList.remove('opened');
-
-    const base = `${redditBaseURL}/r/${subreddit}/${tab}/.json`;
-    const params = new URLSearchParams();
-    if (sortType) params.set('t', sortType);
-    params.set('limit', '75');
-    const url = `${base}?${params.toString()}`;
-
-    const posts = await fetchData<Listing<Post>>(url);
-    const responseData = posts.data.children;
-    // Do not block on subreddit details; show posts immediately
-    displayPosts(responseData, subreddit);
+    await loadInitialSubredditPosts({
+        subreddit,
+        tab,
+        sortType,
+        useBaseListingPath: false
+    });
 }
 
 function isCrosspost(post: Post) {
@@ -1176,6 +1306,7 @@ function clearPostsList() {
     const posts = document.querySelector('#posts');
     if (posts !== null) {
         posts.innerHTML = '';
+        setEndOfFeedMessageVisible(false);
         subredditInfoContainer.style.display = 'none';
         headerButtons.style.borderRadius = "4px 4px 0px 0px";
     }
@@ -1519,6 +1650,10 @@ window.addEventListener("hashchange", () => {
     const permalink = permalinkFromURLAnchor();
     if (isDebugMode()) console.log(`history buttons clicked`, permalink);
     showRedditPageOrDefault(permalink);
+});
+
+postsList.addEventListener('scroll', () => {
+    maybeLoadMorePostsOnScroll();
 });
 
 let profileButton: HTMLElement = strictQuerySelector('.profile-button');
