@@ -47,6 +47,15 @@ facesSideLoader.sideLoadMany(50, 6).catch();
 const rng = new Random();
 
 type Permalink = string;
+const commentSortOptions = [
+    { value: "top", label: "Top" },
+    { value: "best", label: "Best" },
+    { value: "new", label: "New" },
+    { value: "controversial", label: "Controversial" },
+    { value: "old", label: "Old" }
+] as const;
+type CommentSortValue = typeof commentSortOptions[number]["value"];
+const defaultCommentSort: CommentSortValue = "top";
 interface ActiveSubredditQuery {
     sortType: null | "all" | "hour" | "day" | "week" | "month" | "year"
     tab: "hot" | "new" | "rising" | "controversial" | "top" | "gilded"
@@ -304,13 +313,22 @@ async function showSubreddit(subreddit: string) {
     });
 }
 
-async function showPost(permalink: Permalink, sort: string = "top") {
+function getDefaultCommentSort(): CommentSortValue {
+    const selectedSort = localStorage.getItem('defaultCommentSort');
+    if (selectedSort !== null && commentSortOptions.some((option) => option.value === selectedSort)) {
+        return selectedSort as CommentSortValue;
+    }
+    return defaultCommentSort;
+}
+
+async function showPost(permalink: Permalink, sort?: string) {
+    const resolvedSort = sort ?? getDefaultCommentSort();
     const baseurl = removeTrailingSlash(new URL(`${redditBaseURL}${permalink}`));
-    const url = `${baseurl}/.json?limit=75&sort=${sort}`;
+    const url = `${baseurl}/.json?limit=75&sort=${resolvedSort}`;
     try {
         const postData: ApiObj = await fetchData<ApiObj>(url);
         clearPostSection();
-        showPostFromData(postData, permalink, sort);
+        showPostFromData(postData, permalink, resolvedSort);
     } catch (e) {
         console.error(e);
     }
@@ -1006,16 +1024,9 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
     const post: Post = response[0].data.children[0];
 
     // --- Comment Sort Dropdown ---
-    const sortOptions = [
-        { value: "top", label: "Top" },
-        { value: "best", label: "Best" },
-        { value: "new", label: "New" },
-        { value: "controversial", label: "Controversial" },
-        { value: "old", label: "Old" }
-    ];
     const sortSelect = document.createElement("select");
     sortSelect.className = "post-detail-info comment-sort-dropdown";
-    sortOptions.forEach(opt => {
+    commentSortOptions.forEach(opt => {
         const option = document.createElement("option");
         option.value = opt.value;
         option.textContent = opt.label;
@@ -1602,6 +1613,22 @@ function showLongAddress() {
     }    
 }
 
+const defaultCommentSortSelect: HTMLSelectElement = strictQuerySelector('#default-comment-sort');
+defaultCommentSortSelect.addEventListener('change', function() {
+    const selectedSort = defaultCommentSortSelect.value;
+    if (commentSortOptions.some((option) => option.value === selectedSort)) {
+        localStorage.setItem('defaultCommentSort', selectedSort);
+    } else {
+        localStorage.setItem('defaultCommentSort', defaultCommentSort);
+        defaultCommentSortSelect.value = defaultCommentSort;
+    }
+})
+
+function setDefaultCommentSortUI() {
+    const savedSort = getDefaultCommentSort();
+    defaultCommentSortSelect.value = savedSort;
+}
+
 const checkbox4: HTMLInputElement = strictQuerySelector('#hide-media');
 checkbox4.addEventListener('change', function() {
     const postImage = document.querySelector('.post-image') as HTMLElement | null;
@@ -1934,6 +1961,7 @@ function numberFormatter(number) {
 setDarkMode();  
 showSubredditDetails();
 showLongAddress();
+setDefaultCommentSortUI();
 applySavedTheme();
 setDisplayDensity();
 hideMedia();

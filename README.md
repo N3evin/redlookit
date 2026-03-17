@@ -73,8 +73,9 @@ PS: If you have a better name, please let me know 🙏
 - [x] Update search bar icons to community icons
 - [x] Resizeable post area
 - [x] Sorting Comments
-- [ ] Default Comment Sorting Option in Settings
-- [ ] Infinite Scroll
+- [x] Infinite Scroll
+- [x] Crown on comment to denote is owner of post commenting
+- [x] Default Comment Sorting Option in Settings
 - [ ] Keyboard Shortcut Panel
 - [ ] Redesign Settings Panel
 - [ ] Help/Info Panel
