@@ -1042,10 +1042,12 @@ const subredditSection: HTMLElement = strictQuerySelector('.your-subreddits')
 
 searchForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    const normalizedSubreddit = subredditName.value.trim().toLowerCase().replace(/^r\//, "");
     trackEvent("search_subreddit", {
         ...getAnalyticsContext(),
         results_count: document.querySelectorAll(".search-result-link").length,
-        used_suggestion: false
+        used_suggestion: false,
+        ...(normalizedSubreddit !== "" ? { selected_subreddit: normalizedSubreddit } : {})
     });
     showSubreddit(subredditName.value);
     (document.querySelector('.search-results') as HTMLElement).style.display = 'none';
