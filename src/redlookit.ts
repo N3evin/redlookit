@@ -2,28 +2,34 @@ import "../styles/redlookit.css"
 import "./@types/reddit-types.ts"
 import {HumanFacesSideLoader} from "./facesSideloader"
 import {Random, UUID, UUIDFormat} from "./random";
-import {debounce} from "./domUtils";
 import {isMediaHidden} from "./mediaUtils";
 import {fetchData} from "./networkUtils";
 import {setVoteDisplay} from "./voteUtils";
+import {displayComments} from "./comments";
+import {getAnalyticsContext, trackEvent, trackRouteView, trackSettingChange} from "./analyticsUtils";
+import {decodeHTML, isHTMLElement, strictQuerySelector} from "./domQueryUtils";
+import {getPostIdFromPermalink, permalinkFromURLAnchor, removeTrailingSlash, setURLAnchor, type Permalink} from "./routingUtils";
+import {commentSortOptions, defaultCommentSort, defaultSubredditSort, defaultSubredditTopTime, getDefaultCommentSort, getDefaultSubredditPostSortQuery, getDefaultSubredditSort, getDefaultSubredditTopTime, getSavedSubredditSet, getSavedSubreddits, subredditSortOptions, subredditTopTimeOptions} from "./settingsStore";
+import {getSubredditIcon, numberFormatter} from "./subredditFormatUtils";
+import {createImage, embedRedditImages, getPostDetails, hasSelfText, isImage, isSelfPost, isValidAbsoluteImageURL} from "./postRendering";
+import {createSubredditSearchController} from "./subredditSearch";
+import {
+    hideMedia as applyHideMediaSetting,
+    setDarkMode as applyDarkModeSetting,
+    setDefaultCommentSortUI as applyDefaultCommentSortUI,
+    setDefaultSubredditSortUI as applyDefaultSubredditSortUI,
+    setDynamicProfileAvatars,
+    setPageTitle,
+    showLongAddress as applyShowLongAddressSetting,
+    showSubredditDetails as applyShowSubredditDetailsSetting,
+    syncDefaultSubredditTopTimeVisibility as applyTopTimeVisibility
+} from "./settings";
+import {buildSubredditListingURL, isSameSubredditQuery, type ActiveSubredditQuery} from "./feedLoader";
 
 function isDebugMode(): boolean {
     // Won't support ipv6 loopback
     const url = new URL(document.URL);
     return url.protocol === "file:" || url.hostname === "localhost" || url.hostname === "127.0.0.1";
-}
-
-function assert(condition: boolean, msg: string = "Assertion failed"): asserts condition {
-    if (!condition && isDebugMode()) {
-        throw new Error(msg);
-    }
-}
-
-// A query selector that throws
-function strictQuerySelector<T extends Element>(selector: string): T {
-    const element: T | null = document.querySelector<T>(selector);
-    assert(element !== null, `Failed to find a DOM element matching selector "${selector}"`);
-    return element;
 }
 
 const redditBaseURL: string = "https://msoutlookkitapi.n3evin.com";
@@ -45,115 +51,6 @@ const facesSideLoader = new HumanFacesSideLoader(0);
 facesSideLoader.sideLoadMany(50, 6).catch();
 
 const rng = new Random();
-
-type Permalink = string;
-type AnalyticsRouteType = "home" | "subreddit" | "post";
-type AnalyticsParamValue = string | number | boolean;
-type AnalyticsParams = Record<string, AnalyticsParamValue>;
-const productionAnalyticsHostnames = new Set(["redlookit.n3evin.com", "www.redlookit.n3evin.com"]);
-
-function isAnalyticsEnabled(): boolean {
-    const hostName = window.location.hostname.toLowerCase();
-    return productionAnalyticsHostnames.has(hostName);
-}
-
-function getAnalyticsContext(): AnalyticsParams {
-    return {
-        theme: localStorage.getItem("currentTheme") || "defaultTheme",
-        ui_density: localStorage.getItem("displayDensity") || "roomy",
-        is_dark_mode: localStorage.getItem("isDarkMode") === "true"
-    };
-}
-
-function parsePermalinkForAnalytics(permalink: Permalink | null): { route_type: AnalyticsRouteType, subreddit: string, post_id: string } {
-    if (permalink === null || permalink.trim() === "") {
-        return { route_type: "home", subreddit: "", post_id: "" };
-    }
-    const postMatch = permalink.match(/\/?r\/([^/]+?)\/comments\/([^/]+)/i);
-    if (postMatch !== null) {
-        return { route_type: "post", subreddit: postMatch[1].toLowerCase(), post_id: postMatch[2] };
-    }
-    const subredditMatch = permalink.match(/\/?r\/([^/]+)/i);
-    if (subredditMatch !== null) {
-        return { route_type: "subreddit", subreddit: subredditMatch[1].toLowerCase(), post_id: "" };
-    }
-    return { route_type: "home", subreddit: "", post_id: "" };
-}
-
-function getPostIdFromPermalink(permalink: Permalink): string {
-    const postMatch = permalink.match(/\/comments\/([^/]+)/i);
-    return postMatch !== null ? postMatch[1] : "";
-}
-
-function trackEvent(eventName: string, params: AnalyticsParams = {}): void {
-    if (!isAnalyticsEnabled()) {
-        return;
-    }
-    const gtagFn = (window as any).gtag;
-    if (typeof gtagFn !== "function") {
-        return;
-    }
-    const cleanParams: AnalyticsParams = {};
-    for (const [key, value] of Object.entries(params)) {
-        if (value !== undefined && value !== null) {
-            cleanParams[key] = value;
-        }
-    }
-    gtagFn("event", eventName, cleanParams);
-}
-
-function trackSettingChange(settingName: string, settingValue: string | boolean): void {
-    trackEvent("change_setting", {
-        ...getAnalyticsContext(),
-        setting_name: settingName,
-        setting_value: typeof settingValue === "boolean" ? (settingValue ? "true" : "false") : settingValue
-    });
-}
-
-function trackRouteView(permalink: Permalink | null): void {
-    const routeInfo = parsePermalinkForAnalytics(permalink);
-    trackEvent("view_route", {
-        ...getAnalyticsContext(),
-        route_type: routeInfo.route_type,
-        subreddit: routeInfo.subreddit,
-        post_id: routeInfo.post_id
-    });
-}
-
-const commentSortOptions = [
-    { value: "top", label: "Top" },
-    { value: "best", label: "Best" },
-    { value: "new", label: "New" },
-    { value: "controversial", label: "Controversial" },
-    { value: "old", label: "Old" }
-] as const;
-type CommentSortValue = typeof commentSortOptions[number]["value"];
-const defaultCommentSort: CommentSortValue = "top";
-const subredditSortOptions = [
-    { value: "hot", label: "Hot" },
-    { value: "new", label: "New" },
-    { value: "rising", label: "Rising" },
-    { value: "top", label: "Top" }
-] as const;
-type SubredditSortValue = typeof subredditSortOptions[number]["value"];
-const defaultSubredditSort: SubredditSortValue = "hot";
-const subredditTopTimeOptions = [
-    { value: "hour", label: "Hour" },
-    { value: "day", label: "Day" },
-    { value: "week", label: "Week" },
-    { value: "month", label: "Month" },
-    { value: "year", label: "Year" },
-    { value: "all", label: "All Time" }
-] as const;
-type SubredditTopTimeValue = typeof subredditTopTimeOptions[number]["value"];
-const defaultSubredditTopTime: SubredditTopTimeValue = "all";
-interface ActiveSubredditQuery {
-    sortType: null | "all" | "hour" | "day" | "week" | "month" | "year"
-    tab: "hot" | "new" | "rising" | "controversial" | "top" | "gilded"
-    subreddit: string
-    useBaseListingPath: boolean
-}
-
 const subredditPagingState: {
     query: ActiveSubredditQuery | null
     after: string | null
@@ -167,21 +64,6 @@ const subredditPagingState: {
     hasMore: true,
     subredditInformation: null
 };
-
-function buildSubredditListingURL(query: ActiveSubredditQuery, after: string | null = null): string {
-    const base = query.useBaseListingPath
-        ? `${redditBaseURL}/r/${query.subreddit}.json`
-        : `${redditBaseURL}/r/${query.subreddit}/${query.tab}/.json`;
-    const params = new URLSearchParams();
-    if (query.sortType !== null) {
-        params.set('t', query.sortType);
-    }
-    params.set('limit', subredditPageLimit.toString());
-    if (after !== null && after !== "") {
-        params.set('after', after);
-    }
-    return `${base}?${params.toString()}`;
-}
 
 async function fetchSubredditDetails(subreddit: string): Promise<SubredditDetails | null> {
     try {
@@ -244,16 +126,6 @@ function resetSubredditPaging(query: ActiveSubredditQuery): void {
     setEndOfFeedMessageVisible(false);
 }
 
-function isSameSubredditQuery(a: ActiveSubredditQuery | null, b: ActiveSubredditQuery): boolean {
-    if (a === null) {
-        return false;
-    }
-    return a.subreddit === b.subreddit
-        && a.tab === b.tab
-        && a.sortType === b.sortType
-        && a.useBaseListingPath === b.useBaseListingPath;
-}
-
 function applyPageResultToState(posts: Listing<Post>): void {
     const nextAfter = posts.data.after;
     if (typeof nextAfter === "string" && nextAfter.length > 0) {
@@ -276,7 +148,7 @@ async function loadMorePostsFromSubreddit(): Promise<void> {
     subredditPagingState.isLoading = true;
     setLoadMoreIndicatorVisible(true);
     try {
-        const url = buildSubredditListingURL(query, subredditPagingState.after);
+        const url = buildSubredditListingURL(query, redditBaseURL, subredditPageLimit, subredditPagingState.after);
         const posts = await fetchData<Listing<Post>>(url);
         if (!isSameSubredditQuery(subredditPagingState.query, query)) {
             return;
@@ -317,7 +189,7 @@ async function loadInitialSubredditPosts(query: ActiveSubredditQuery): Promise<v
     resetSubredditPaging(query);
     subredditPagingState.isLoading = true;
     try {
-        const url = buildSubredditListingURL(query, null);
+        const url = buildSubredditListingURL(query, redditBaseURL, subredditPageLimit, null);
         const [posts, subredditInformation] = await Promise.all([
             fetchData<Listing<Post>>(url),
             fetchSubredditDetails(query.subreddit)
@@ -413,44 +285,6 @@ async function showSubreddit(subreddit: string) {
     });
 }
 
-function getDefaultSubredditSort(): SubredditSortValue {
-    const selectedSort = localStorage.getItem('defaultSubredditSort');
-    if (selectedSort !== null && subredditSortOptions.some((option) => option.value === selectedSort)) {
-        return selectedSort as SubredditSortValue;
-    }
-    return defaultSubredditSort;
-}
-
-function getDefaultSubredditTopTime(): SubredditTopTimeValue {
-    const selectedTopTime = localStorage.getItem('defaultSubredditTopTime');
-    if (selectedTopTime !== null && subredditTopTimeOptions.some((option) => option.value === selectedTopTime)) {
-        return selectedTopTime as SubredditTopTimeValue;
-    }
-    return defaultSubredditTopTime;
-}
-
-function getDefaultSubredditPostSortQuery(): Pick<ActiveSubredditQuery, "tab" | "sortType"> {
-    const tab = getDefaultSubredditSort();
-    if (tab === "top") {
-        return {
-            tab,
-            sortType: getDefaultSubredditTopTime()
-        };
-    }
-    return {
-        tab,
-        sortType: null
-    };
-}
-
-function getDefaultCommentSort(): CommentSortValue {
-    const selectedSort = localStorage.getItem('defaultCommentSort');
-    if (selectedSort !== null && commentSortOptions.some((option) => option.value === selectedSort)) {
-        return selectedSort as CommentSortValue;
-    }
-    return defaultCommentSort;
-}
-
 async function showPost(permalink: Permalink, sort?: string) {
     const resolvedSort = sort ?? getDefaultCommentSort();
     const baseurl = removeTrailingSlash(new URL(`${redditBaseURL}${permalink}`));
@@ -462,64 +296,6 @@ async function showPost(permalink: Permalink, sort?: string) {
     } catch (e) {
         console.error(e);
     }
-}
-
-function permalinkFromURLAnchor(): Permalink | null {
-    // Capture the '/r/sub/...' part including the /r/
-    const permalink = new URL(document.URL).hash
-    if (permalink === "") {
-        return null;
-    }
-
-    // Remove the starting #
-    return permalink.slice(1);
-}
-
-function removeTrailingSlash(url: URL): URL {
-    if (url.pathname.slice(-1) === '/') {
-        url.pathname = url.pathname.slice(0,-1);
-        return url;
-    } else {
-        return url;
-    }
-}
-
-interface URLAnchorFlags {
-    pushState: boolean
-}
-function setURLAnchor(permalink: Permalink, flags: URLAnchorFlags = {pushState:true}): void {
-    const url = removeTrailingSlash(new URL(document.URL));
-    if (url.protocol == "file:///" || ["localhost", "127.0.0.1", "[::1]"].find((v) => v == url.hostname) ) {
-        // Can't pushState something local anymore because of browser security
-        return;
-    }
-    const newurl = new URL(`${url.protocol}//${url.hostname}${url.pathname}#${permalink}`);
-    if (flags.pushState) {
-        window.history.pushState({}, '', newurl);
-    }
-}
-
-function getSubredditIcon(subredditInformation: SubredditDetails) {
-    if (subredditInformation.icon_img != '') {
-        return subredditInformation.icon_img
-    } else if (subredditInformation.community_icon != '') {
-        return subredditInformation.community_icon.replaceAll("&amp;", "&");
-    } else {
-        return 'https://img.icons8.com/fluency-systems-regular/512/reddit.png';
-    }
-}
-
-function getSavedSubredditSet(): Set<string> {
-    const saved = localStorage.getItem('savedSubreddits');
-    if (!saved) {
-        return new Set();
-    }
-    return new Set(
-        saved
-            .split(',')
-            .map((sub) => sub.trim().toLowerCase())
-            .filter((sub) => sub.length > 0)
-    );
 }
 
 let subredditInfoContainer = document.createElement('div');
@@ -790,207 +566,6 @@ function unFavoriteSubreddit(subreddit) {
     localStorage.setItem('savedSubreddits', newSavedSubreddits.toString());
 }
 
-type CommentBuilderOptions = {
-    indent: number, 
-    ppBuffer: HTMLImageElement[], 
-    post: Permalink,
-    postAuthor: string,
-    collapsedCommentsSet: Set<string>,
-    commentsEncounteredSoFar: Set<string>    
-};
-
-const collapsedCommentsStorageKey = "collapsedCommentsByPost";
-type CollapsedCommentsByPost = Record<string, string[]>;
-
-function loadCollapsedCommentsMap(): CollapsedCommentsByPost {
-    const rawStorage = localStorage.getItem(collapsedCommentsStorageKey);
-    if (rawStorage === null) {
-        return {};
-    }
-    try {
-        const parsedStorage = JSON.parse(rawStorage);
-        if (typeof parsedStorage !== "object" || parsedStorage === null || Array.isArray(parsedStorage)) {
-            return {};
-        }
-        const safeCollapsedMap: CollapsedCommentsByPost = {};
-        for (const [postPermalink, commentIds] of Object.entries(parsedStorage as Record<string, unknown>)) {
-            if (!Array.isArray(commentIds)) {
-                continue;
-            }
-            safeCollapsedMap[postPermalink] = commentIds
-                .filter((commentId) => typeof commentId === "string" && commentId.length > 0);
-        }
-        return safeCollapsedMap;
-    } catch (_) {
-        return {};
-    }
-}
-
-function loadCollapsedCommentsForPost(postPermalink: Permalink): Set<string> {
-    const collapsedMap = loadCollapsedCommentsMap();
-    return new Set(collapsedMap[postPermalink] ?? []);
-}
-
-function saveCollapsedCommentsForPost(postPermalink: Permalink, collapsedCommentIds: Set<string>): void {
-    const collapsedMap = loadCollapsedCommentsMap();
-    if (collapsedCommentIds.size === 0) {
-        delete collapsedMap[postPermalink];
-    } else {
-        collapsedMap[postPermalink] = Array.from(collapsedCommentIds);
-    }
-    localStorage.setItem(collapsedCommentsStorageKey, JSON.stringify(collapsedMap));
-}
-
-function getHiddenRepliesCount(commentElement: HTMLElement): number {
-    return Math.max(0, commentElement.querySelectorAll(".usertext").length - 1);
-}
-
-function setCommentCollapsedState(commentElement: HTMLElement, shouldCollapse: boolean): void {
-    commentElement.classList.toggle("comment-thread-collapsed", shouldCollapse);
-    const collapseButton = commentElement.querySelector<HTMLButtonElement>(".comment-collapse-toggle");
-    if (collapseButton !== null) {
-        collapseButton.textContent = shouldCollapse ? "▸" : "▾";
-        collapseButton.title = shouldCollapse ? "Expand thread" : "Collapse thread";
-        collapseButton.setAttribute("aria-label", shouldCollapse ? "Expand comment thread" : "Collapse comment thread");
-        collapseButton.setAttribute("aria-expanded", shouldCollapse ? "false" : "true");
-    }
-    const collapsedSummary = commentElement.querySelector<HTMLElement>(".comment-collapsed-summary");
-    if (collapsedSummary !== null) {
-        if (!shouldCollapse) {
-            collapsedSummary.style.display = "none";
-            collapsedSummary.textContent = "";
-        } else {
-            const hiddenReplies = getHiddenRepliesCount(commentElement);
-            collapsedSummary.style.display = "inline";
-            collapsedSummary.textContent = hiddenReplies > 0
-                ? `${hiddenReplies} repl${hiddenReplies === 1 ? "y" : "ies"} hidden`
-                : "Thread collapsed";
-        }
-    }
-}
-
-function refreshCollapsedCommentAncestors(startElement: HTMLElement): void {
-    let currentElement: HTMLElement | null = startElement;
-    while (currentElement !== null && currentElement !== postSection) {
-        if (currentElement.classList.contains("usertext") && currentElement.classList.contains("comment-thread-collapsed")) {
-            setCommentCollapsedState(currentElement, true);
-        }
-        currentElement = currentElement.parentElement;
-    }
-}
-
-function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],  {post, postAuthor, collapsedCommentsSet, indent=0, ppBuffer=[], commentsEncounteredSoFar=new Set()}: CommentBuilderOptions) {
-    if (listing.length === 0) {
-        return;
-    }
-
-    for (const redditObj of listing) {
-        // At the end of the list reddit adds a "more" object
-        if (redditObj.kind === "t1") {
-            // kind being t1 assures us listing[0] is a SnooComment
-            const comment: SnooComment = redditObj as SnooComment;
-            commentsEncounteredSoFar.add(comment.data.id);
-            
-            const commentElement = document.createElement("div");
-            if (indent > 0) {
-                commentElement.classList.add('replied-comment');
-            }
-            if (collapsedCommentsSet.has(comment.data.id)) {
-                commentElement.classList.add("comment-thread-collapsed");
-            }
-
-            parentElement.appendChild(commentElement);
-            const prom: Promise<HTMLElement> = createComment(comment, {
-                ppBuffer: ppBuffer,
-                domNode: commentElement,
-                postAuthor,
-                postPermalink: post,
-                collapsedCommentsSet
-            });
-            prom.catch( (reason) => {
-                console.error("There was a problem drawing this comment on the page", {"reason":reason, "comment data": comment, "profile picture": ppBuffer, "anchor element on the page=": commentElement});
-            })
-
-            if (comment.data.replies) {
-                displayCommentsRecursive(commentElement, comment.data.replies.data.children, {
-                    indent: indent + 10, 
-                    ppBuffer: ppBuffer,
-                    post: post,
-                    postAuthor,
-                    collapsedCommentsSet,
-                    commentsEncounteredSoFar
-                });
-            }
-            if (commentElement.classList.contains("comment-thread-collapsed")) {
-                setCommentCollapsedState(commentElement, true);
-            }
-            refreshCollapsedCommentAncestors(parentElement);
-
-            if (indent === 0) {
-                parentElement.appendChild(document.createElement('hr'));
-            }
-        } else if (redditObj.kind === "more" && post !== undefined) {
-            const data = redditObj as MoreComments;
-            const moreElement = document.createElement("span");
-            moreElement.classList.add("btn-more");
-            
-            // Fetch the parent of the "more" listing
-            const parentLink = `${redditBaseURL}${post}${data.data.parent_id.slice(3)}`;
-            
-            moreElement.addEventListener("click", async () => {
-                trackEvent("load_more_replies", {
-                    ...getAnalyticsContext(),
-                    post_id: getPostIdFromPermalink(post),
-                    parent_comment_id: data.data.parent_id.replace(/^t[0-9]+_/, "")
-                });
-                moreElement.classList.add("waiting");
-                try {
-                    const data = await fetchData<ApiObj[]>(`${parentLink}.json`);
-                    if (isDebugMode()) console.log("Got data!", parentLink, data);
-                    moreElement.remove();
-
-                    // Our type definitions aren't robust enough to go through the tree properly
-                    // We just cop out. Cast as `any` and try/catch.
-                    let replies: Listing<SnooComment>;
-                    try {
-                        replies = (data as any)[1].data.children[0].data.replies.data
-                    } catch (e) {
-                        moreElement.classList.remove("waiting");
-                        return Promise.reject(e);
-                    }
-
-                    replies.children = replies.children.filter((v) => {
-                        return !commentsEncounteredSoFar.has(v.data.id)
-                    })
-
-                    displayCommentsRecursive(parentElement, replies.children, {
-                        indent: indent + 10,
-                        ppBuffer: ppBuffer,
-                        post: post,
-                        postAuthor,
-                        collapsedCommentsSet,
-                        commentsEncounteredSoFar
-                    });
-                    refreshCollapsedCommentAncestors(parentElement);
-                } catch (e) {
-                    moreElement.classList.remove("waiting");
-                    console.error(e);
-                }
-            });
-            parentElement.appendChild(moreElement);
-        }
-    }
-}
-
-function displayComments(commentsData, {post, postAuthor}: {post: Permalink, postAuthor: string}) {
-    postSection.classList.add('post-selected');
-    postSection.classList.remove('deselected');
-
-    const stableInTimeFaceBuffer = facesSideLoader.getFaces().slice(0); // Stable-in-time copy of the full array
-    const collapsedCommentsSet = loadCollapsedCommentsForPost(post);
-    displayCommentsRecursive(postSection, commentsData, { indent: 0, ppBuffer: stableInTimeFaceBuffer, post: post, postAuthor, collapsedCommentsSet, commentsEncounteredSoFar: new Set()});
-}
-
 let sortButton = document.querySelector('.post-header-button.sort') as HTMLElement;
 let sortMenu = document.querySelector('.sort-menu') as HTMLElement;
 
@@ -1215,92 +790,6 @@ async function fetchAndDisplaySub({sortType=null, tab="hot", subreddit}: subredd
     });
 }
 
-function isCrosspost(post: Post) {
-    return (typeof post.data.crosspost_parent_list === "object") && post.data.crosspost_parent_list.length > 0;
-}
-
-function isImage(post: Post) {
-    if (isCrosspost(post)) {
-        return false;
-    }
-
-    if (post.data.post_hint === 'image' || post.data.domain === "i.redd.it") {
-        return true;
-    }
-
-    if (post.data.url_overridden_by_dest !== undefined) {
-        const url = new URL(post.data.url_overridden_by_dest);
-        return url.host === "i.redd.it";
-    }
-
-    return false;
-}
-
-function isSelfPost(post: Post) {
-    return post.data.is_self;
-}
-
-function isValidAbsoluteImageURL(value: string | undefined): boolean {
-    if (typeof value !== "string" || value.trim() === "") {
-        return false;
-    }
-    try {
-        const parsed = new URL(value);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-            return false;
-        }
-        // Some Reddit preview hosts frequently reject hotlinked image fetches.
-        if (parsed.hostname === "external-preview.redd.it" || parsed.hostname === "preview.redd.it") {
-            return false;
-        }
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-function hasSelfText(post: Post) {
-    return typeof post.data.selftext == "string" && post.data.selftext !== "";
-}
-
-function createImage(src: string) {
-    if (isMediaHidden()) {
-        return;
-    }
-    try {
-        const parsed = new URL(src);
-        if (parsed.hostname === "external-preview.redd.it" || parsed.hostname === "preview.redd.it") {
-            return;
-        }
-    } catch {
-        return;
-    }
-    let image = document.createElement('img');
-    image.src = src;
-    image.classList.add('post-image');
-    return image
-}
-
-function embedRedditImages(html: string): string {
-    const virtualElement = document.createElement("div");
-    virtualElement.innerHTML = html;
-
-    const linksInside = virtualElement.querySelectorAll<HTMLAnchorElement>("a")
-    for (const link of linksInside) {
-        if (link !== null && link.href !== "") {
-            const url = new URL(link.href)
-            if (url.host == "preview.redd.it") {
-                const img = createImage(link.href)
-                if (img) {
-                    link.replaceWith(img);
-                }
-            }
-        }
-    }
-
-    return virtualElement.innerHTML;
-}
-
 function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: string = "top") {
     try {
         // reset scroll position when user clicks on a new post
@@ -1417,7 +906,23 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
     postSection.appendChild(sortSelect);
     postSection.append(document.createElement('hr'));
 
-    displayComments(comments, { post: post.data.permalink, postAuthor: post.data.author });
+    const stableInTimeFaceBuffer = facesSideLoader.getFaces().slice(0);
+    displayComments(
+        comments,
+        { post: post.data.permalink, postAuthor: post.data.author },
+        stableInTimeFaceBuffer,
+        {
+            postSection,
+            redditBaseURL,
+            rng,
+            colors,
+            initials,
+            isDebugMode,
+            trackEvent,
+            getAnalyticsContext,
+            renderCommentBodyHtml: embedRedditImages
+        }
+    );
 }
 
 document.body.addEventListener('keydown', (event) => {
@@ -1425,302 +930,6 @@ document.body.addEventListener('keydown', (event) => {
         clearPostSection();
     }
 })
-
-function getPostDetails(response: any) {
-    let upvotes = document.createElement('span');
-    setVoteDisplay(upvotes, response[0].data.children[0].data.ups, 'post-detail-info');
-    let subreddit = document.createElement('a');
-    subreddit.classList.add('post-detail-info');
-    subreddit.href = `#/${response[0].data.children[0].data.subreddit_name_prefixed}`;
-    subreddit.append(response[0].data.children[0].data.subreddit_name_prefixed);
-    let numComments = document.createElement('span');
-    numComments.append(`${response[0].data.children[0].data.num_comments.toLocaleString()} Comments`);
-    numComments.classList.add('post-detail-info')
-    let author = document.createElement('span');
-    author.append(`Posted by u/${response[0].data.children[0].data.author}`);
-    author.classList.add('post-detail-info')
-    let sortButton = document.createElement('span');
-    sortButton.append('Sort By:');
-    sortButton.classList.add('post-detail-info')
-    return [upvotes, subreddit, numComments, author, sortButton];
-}
-
-async function generateGnomePic(): Promise<HTMLImageElement> {
-    const gnome = document.createElement<"img">("img");
-    gnome.classList.add("gnome");
-
-    // Potential Hmirror 
-    const flipSeed = await rng.random();
-    const flip = flipSeed <= 0.5 ? "scaleX(-1) " : "";
-
-    // +Random rotation between -20deg +20deg
-    const mirrorSeed = await rng.random();
-    gnome.style.transform = `${flip}rotate(${Math.round(mirrorSeed * 40 - 20)}deg) `;
-    
-    const colorSeed = await rng.random();
-    gnome.style.backgroundColor = colors[Math.floor(colorSeed * colors.length)];
-
-    return gnome;
-}
-
-// noinspection JSUnusedLocalSymbols
-async function generateTextPic(commentData: SnooComment, size: number): Promise<HTMLSpanElement> {
-    const textPic = document.createElement<"span">("span");
-
-    const pseudoRand1 = await rng.random(0, initials.length-1);
-    const pseudoRand2 = await rng.random(0, initials.length-1);
-    const ppInitials = initials[Math.round(pseudoRand1)] + initials[Math.round(pseudoRand2)];
-
-    textPic.style.fontWeight = "600";
-    textPic.style.fontSize = "16px";
-    textPic.style.lineHeight = "40px";
-    textPic.style.textAlign = "center";
-    textPic.style.display = "inline-block";
-    textPic.style.cssText += "-webkit-touch-callout: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none;";
-
-    const colorSeed = await rng.random(0, colors.length-1);
-    textPic.style.backgroundColor = colors[Math.round(colorSeed)];
-    
-    textPic.textContent = `${ppInitials}`;
-    return textPic;
-}
-
-function copyImage2Canvas(origin: HTMLImageElement, newSize: number): HTMLCanvasElement | null {
-    const canv: HTMLCanvasElement = document.createElement("canvas");
-
-    // canvas will sample 4 pixels per pixel displayed then be downsized via css
-    // otherwise if 1px = 1px the picture looks pixelated & jagged
-    // css seems to do a small cubic interpolation when downsizing, and it makes a world of difference
-    canv.height = canv.width = newSize * 2;
-
-    canv.style.height = canv.style.width = newSize.toString();
-    const ctx: CanvasRenderingContext2D | null = canv.getContext('2d');
-
-    if (ctx !== null) {
-        ctx.imageSmoothingEnabled = false;
-        ctx.imageSmoothingQuality = "high";
-        try {
-            ctx.drawImage(origin, 0, 0, newSize * 2, newSize * 2);
-        } catch (e) {
-            console.error(origin, e);
-        }
-        
-        return canv;
-    } else {
-        return null;
-    }
-}
-
-async function generateFacePic(commentData: SnooComment, ppBuffer: HTMLImageElement[], displaySize: number = 50): Promise<HTMLCanvasElement> {
-    const imageSeed = Math.round(await rng.random(0, ppBuffer.length-1));
-    const imageElement: HTMLImageElement = ppBuffer[imageSeed];
-
-    // Purpose of copying: A single <img> tag cannot be in multiple spots at the same time
-    // I did not find a way to duplicate the reference to an img tag 
-    // If you use Element.appendChild with the same reference multiple times, the method will move the element around
-    // Creating a new <img> tag and copying the attributes would work, but it would fetch the src again
-    // The image at thispersondoesnotexist changes every second so the src points to a new picture now
-    // Since the URL has a parameter and hasn't changed, then most likely, querying the URL again would
-    //     hit the browser's cache. but we can't know that.
-    // Solution: make a canvas and give it the single <img> reference. It makes a new one every time. It doesn't query the src.
-    const canv = copyImage2Canvas(imageElement, displaySize);
-    assert(canv !== null, `generateFacePic couldn't get a canvas 2D context from image #${imageSeed}, ${imageElement.src} (img.${Array.from(imageElement.classList).join(".")})`);
-
-    canv.classList.add(`human-${imageSeed}`);
-    return canv;
-}
-
-type HTMLProfilePictureElement = HTMLCanvasElement | HTMLImageElement | HTMLSpanElement;
-async function createProfilePicture(commentData: SnooComment, size: number = 50, ppBuffer: HTMLImageElement[] = []): Promise<HTMLProfilePictureElement> {
-    async function helper(): Promise<HTMLProfilePictureElement> {
-        if (commentData.data.subreddit === "gnometalk") {
-            return generateGnomePic();
-        } else {
-            // 0-10  => 0
-            // 10-25 => Between 0 and 0.7
-            // 25+   => 0.7
-            // Don't replace this with a formula filled with Math.min(), 
-            //    divisions and substractions, this is meant to be readable for a beginner
-            const chanceForAFacePic = (() => {
-                if (ppBuffer.length < 10) {
-                    return 0;
-                } else {
-                    const baseValue = 0.7; // Max .7
-
-                    // What percentage of progress are you between 10 and 25
-                    if (ppBuffer.length >= 25) {
-                        return baseValue;
-                    } else {
-                        return ((ppBuffer.length - 10)/15)*baseValue;
-                    }
-                }
-            })();
-
-            if ((await rng.random()) < chanceForAFacePic) {
-                return generateFacePic(commentData, ppBuffer);
-            } else {
-                return generateTextPic(commentData, size);
-            }
-        }
-    }
-
-    const ppElem: HTMLProfilePictureElement = await helper();
-
-    ppElem.classList.add("avatar")
-    ppElem.style.marginRight = "10px";
-    if (!ppElem.classList.contains("avatar-circle")) {
-        ppElem.classList.add("avatar-circle");
-    }
-    return ppElem;
-}
-
-type CreateCommentOptions = {
-    ppBuffer: HTMLImageElement[],
-    domNode?: HTMLElement,
-    postAuthor?: string,
-    postPermalink?: Permalink,
-    collapsedCommentsSet?: Set<string>
-};
-async function createComment(commentData: SnooComment, options: CreateCommentOptions={ppBuffer: []}): Promise<HTMLElement> {
-    if (options.domNode === undefined) {
-        options.domNode = document.createElement('div');
-    }
-    options.domNode.id = commentData.data.id;
-    options.domNode.classList.add("usertext");
-
-    // Author parent div
-    const author = document.createElement('div');
-    author.classList.add("author")
-    author.classList.add("comment-header");
-    author.style.display = "flex";
-
-    const collapseToggle = document.createElement("button");
-    collapseToggle.type = "button";
-    collapseToggle.classList.add("comment-collapse-toggle");
-    collapseToggle.addEventListener("click", (event) => {
-        event.stopPropagation();
-        const willCollapse = !options.domNode.classList.contains("comment-thread-collapsed");
-        setCommentCollapsedState(options.domNode, willCollapse);
-        trackEvent("toggle_comment_thread", {
-            ...getAnalyticsContext(),
-            post_id: options.postPermalink !== undefined ? getPostIdFromPermalink(options.postPermalink) : "",
-            comment_id: commentData.data.id,
-            action: willCollapse ? "collapse" : "expand",
-            method: "button"
-        });
-        if (options.collapsedCommentsSet !== undefined && options.postPermalink !== undefined) {
-            if (willCollapse) {
-                options.collapsedCommentsSet.add(commentData.data.id);
-            } else {
-                options.collapsedCommentsSet.delete(commentData.data.id);
-            }
-            saveCollapsedCommentsForPost(options.postPermalink, options.collapsedCommentsSet);
-        }
-    });
-    author.append(collapseToggle);
-
-    await rng.setSeed(commentData.data.author);
-    
-    // Placeholder pic
-    const ppSize = 50; //px
-    const pfpPlaceHolder = document.createElement<"span">("span");
-    pfpPlaceHolder.style.width = pfpPlaceHolder.style.height = `${ppSize}px`;
-    author.appendChild(pfpPlaceHolder);
-
-    // Real Profile pic
-    createProfilePicture(commentData, ppSize, options.ppBuffer).then( (generatedPfp) => {
-        author.replaceChild(generatedPfp, pfpPlaceHolder);
-    });
-
-    // Author's name and sent date
-    let authorText = document.createElement("div");
-    authorText.classList.add("author-text")
-    authorText.style.display = "flex";
-    authorText.style.flexDirection = "column";
-    {
-        // Name
-        let authorTextInfo = document.createElement("span");
-        authorTextInfo.classList.add("username")
-        authorTextInfo.classList.add("email")
-        const scoreLength = (""+commentData.data.score).length
-        
-        // Email addresses are composed of uuids and hide the score within the first block
-        const format: UUIDFormat = [
-            { n: 8, charset: "alpha" }, // // First section is only letters to avoid ambiguity on the score
-            { n: 4, charset: "alphanumerical" },
-            { n: 4, charset: "alphanumerical" },
-            { n: 4, charset: "alphanumerical" },
-            { n: 12, charset: "alphanumerical" }
-        ];
-        rng.randomUUID(format).then((uuid: UUID) => {
-            const slicedUUID = uuid.slice(scoreLength); // Remove a bunch of letters from the start
-            const isSubmitterFlag = "is_submitter" in commentData.data && commentData.data.is_submitter === true;
-            const isCommentByPostOwner = isSubmitterFlag
-                || (
-                    options.postAuthor !== undefined
-                    && commentData.data.author.toLowerCase() === options.postAuthor.toLowerCase()
-                );
-            const ownerCrown = isCommentByPostOwner ? ' <span class="op-crown">👑</span>' : '';
-
-            // We overwrite the 1st section with the comment's score
-            if (localStorage.getItem('showLongAddress') == 'true' || localStorage.getItem('showLongAddress') == null) {
-                authorTextInfo.innerHTML = `${commentData.data.author} <${commentData.data.score}${slicedUUID}@securemail.org>${ownerCrown}`;
-            } else {
-                authorTextInfo.innerHTML = `u/${commentData.data.author} (${commentData.data.score})${ownerCrown}`;
-                authorTextInfo.title = `&lt;${commentData.data.author}@reddit.com&gt;`
-            }
-        })
-        authorText.append(authorTextInfo);
-
-        // Sent date
-        let d = new Date(commentData.data.created_utc*1000);
-        const dateDiv = document.createElement("span");
-        dateDiv.classList.add("comment-posted-date")
-        dateDiv.innerHTML = d.toString().slice(0,21);
-        dateDiv.style.color = "#a2a2a2";
-        dateDiv.style.fontSize = "0.85em";
-        authorText.append(dateDiv);
-    }
-    author.append(authorText);
-    const collapsedSummary = document.createElement("span");
-    collapsedSummary.classList.add("comment-collapsed-summary");
-    collapsedSummary.style.display = "none";
-    author.append(collapsedSummary);
-
-    const commentText = document.createElement('div');
-    commentText.classList.add("comment");
-    commentText.insertAdjacentHTML('beforeend', embedRedditImages(decodeHTML(commentData.data.body_html)));
-
-    options.domNode.prepend(author, commentText);
-    setCommentCollapsedState(options.domNode, options.domNode.classList.contains("comment-thread-collapsed"));
-    author.addEventListener("click", () => {
-        const willCollapse = !options.domNode.classList.contains("comment-thread-collapsed");
-        setCommentCollapsedState(options.domNode, willCollapse);
-        trackEvent("toggle_comment_thread", {
-            ...getAnalyticsContext(),
-            post_id: options.postPermalink !== undefined ? getPostIdFromPermalink(options.postPermalink) : "",
-            comment_id: commentData.data.id,
-            action: willCollapse ? "collapse" : "expand",
-            method: "header"
-        });
-        if (options.collapsedCommentsSet !== undefined && options.postPermalink !== undefined) {
-            if (willCollapse) {
-                options.collapsedCommentsSet.add(commentData.data.id);
-            } else {
-                options.collapsedCommentsSet.delete(commentData.data.id);
-            }
-            saveCollapsedCommentsForPost(options.postPermalink, options.collapsedCommentsSet);
-        }
-    });
-    return options.domNode
-}
-
-type SerializedHTML = string;
-function decodeHTML(html: SerializedHTML): SerializedHTML {
-    const txt = document.createElement("textarea");
-    txt.innerHTML = html;
-    return txt.value;
-}
 
 function clearPost() {
     postSection.innerHTML = '';
@@ -1780,16 +989,6 @@ function displaySavedSubreddits() {
     }
 }
 
-function getSavedSubreddits() {
-    if (localStorage.getItem('savedSubreddits')) {
-        let savedSubreddits = localStorage.getItem('savedSubreddits');
-        return savedSubreddits.split(',');
-    } else {
-        return false
-    }
-    
-}
-
 // noinspection JSUnusedLocalSymbols
 function removeSavedSubreddit(subreddit) {
     let savedSubreddits = getSavedSubreddits();
@@ -1819,10 +1018,6 @@ inboxButton.addEventListener('click', async () => {
     clearPost();
     showSubreddit('popular');
 })
-
-function isHTMLElement(obj: any): obj is HTMLElement {
-    return (typeof obj === "object") && (obj as HTMLElement).style !== undefined;
-}
 
 let collapsible: NodeListOf<HTMLElement> = document.querySelectorAll(".collapsible");
 for (let coll of collapsible) {
@@ -1923,18 +1118,6 @@ checkbox.addEventListener('change', function() {
     }
 })
 
-function setDarkMode() {
-    if (localStorage.getItem('isDarkMode') == 'true') {
-        checkbox.checked = true;
-        strictQuerySelector('body').classList.remove('light');
-        strictQuerySelector('body').classList.add('dark');
-    } else if (localStorage.getItem('isDarkMode') == 'false') {
-        strictQuerySelector('body').classList.remove('dark');
-        strictQuerySelector('body').classList.add('light');
-        checkbox.checked = false;
-    }    
-}
-
 const checkbox2: HTMLInputElement = strictQuerySelector('#show-subreddit-details');
 checkbox2.addEventListener('change', function() {
     const subredditInfoElement = document.querySelector('.subreddit-info') as HTMLElement | null;
@@ -1957,14 +1140,6 @@ checkbox2.addEventListener('change', function() {
     }
 })
 
-function showSubredditDetails() {
-    if (localStorage.getItem('showSubDetails') == 'true') {
-        checkbox2.checked = true;
-    } else if (localStorage.getItem('showSubDetails') == 'false') {
-        checkbox2.checked = false;
-    }    
-}
-
 const checkbox3: HTMLInputElement = strictQuerySelector('#show-long-emails');
 checkbox3.addEventListener('change', function() {
     if (checkbox3.checked) {
@@ -1976,22 +1151,8 @@ checkbox3.addEventListener('change', function() {
     }
 })
 
-function showLongAddress() {
-    if (localStorage.getItem('showLongAddress') == 'true') {
-        checkbox3.checked = true;
-    } else if (localStorage.getItem('showLongAddress') == 'false') {
-        checkbox3.checked = false;
-    }    
-}
-
 const defaultSubredditSortSelect: HTMLSelectElement = strictQuerySelector('#default-subreddit-sort');
 const defaultSubredditTopTimeContainer: HTMLElement = strictQuerySelector('#default-subreddit-top-time-container');
-function syncDefaultSubredditTopTimeVisibility(): void {
-    const showTopTime = defaultSubredditSortSelect.value === "top";
-    defaultSubredditTopTimeContainer.style.display = showTopTime ? "block" : "none";
-    defaultSubredditTopTimeSelect.disabled = !showTopTime;
-}
-
 defaultSubredditSortSelect.addEventListener('change', function() {
     const selectedSort = defaultSubredditSortSelect.value;
     if (subredditSortOptions.some((option) => option.value === selectedSort)) {
@@ -2002,7 +1163,7 @@ defaultSubredditSortSelect.addEventListener('change', function() {
         defaultSubredditSortSelect.value = defaultSubredditSort;
         trackSettingChange("defaultSubredditSort", defaultSubredditSort);
     }
-    syncDefaultSubredditTopTimeVisibility();
+    applyTopTimeVisibility(defaultSubredditSortSelect, defaultSubredditTopTimeContainer, defaultSubredditTopTimeSelect);
 })
 
 const defaultSubredditTopTimeSelect: HTMLSelectElement = strictQuerySelector('#default-subreddit-top-time');
@@ -2018,12 +1179,6 @@ defaultSubredditTopTimeSelect.addEventListener('change', function() {
     }
 })
 
-function setDefaultSubredditSortUI() {
-    defaultSubredditSortSelect.value = getDefaultSubredditSort();
-    defaultSubredditTopTimeSelect.value = getDefaultSubredditTopTime();
-    syncDefaultSubredditTopTimeVisibility();
-}
-
 const defaultCommentSortSelect: HTMLSelectElement = strictQuerySelector('#default-comment-sort');
 defaultCommentSortSelect.addEventListener('change', function() {
     const selectedSort = defaultCommentSortSelect.value;
@@ -2036,11 +1191,6 @@ defaultCommentSortSelect.addEventListener('change', function() {
         trackSettingChange("defaultCommentSort", defaultCommentSort);
     }
 })
-
-function setDefaultCommentSortUI() {
-    const savedSort = getDefaultCommentSort();
-    defaultCommentSortSelect.value = savedSort;
-}
 
 const checkbox4: HTMLInputElement = strictQuerySelector('#hide-media');
 checkbox4.addEventListener('change', function() {
@@ -2064,34 +1214,6 @@ checkbox4.addEventListener('change', function() {
         }
     }
 })
-
-function hideMedia() {
-    const hideMediaSetting = localStorage.getItem('hideMedia');
-    const redditPostImage = document.querySelector('.reddit-post img') as HTMLElement | null;
-    const postImage = document.querySelector('.post-image') as HTMLElement | null;
-    const postVideo = document.querySelector('.post-video') as HTMLElement | null;
-    if (hideMediaSetting == 'true') {
-        checkbox4.checked = true;
-        if (redditPostImage) {
-            redditPostImage.style.visibility = 'hidden';
-        }
-        if (postImage) {
-            postImage.style.visibility = 'hidden';
-        } else if (postVideo) {
-            postVideo.style.visibility = 'hidden';
-        }
-    } else if (hideMediaSetting == 'false') {
-        checkbox4.checked = false;
-        if (redditPostImage) {
-            redditPostImage.style.visibility = 'visible';
-        }
-        if (postImage) {
-            postImage.style.visibility = 'visible';
-        } else if (postVideo) {
-            postVideo.style.visibility = 'visible';
-        }
-    }
-}
 
 let spoilerTexts = document.querySelectorAll('span.md-spoiler-text') as NodeListOf<HTMLElement>;
 if (spoilerTexts) {
@@ -2122,27 +1244,6 @@ pageTitleInputForm.addEventListener('submit', (event) => {
     trackSettingChange("pageTitle", "custom");
     document.title = pageTitleInputBox.value;
 })
-
-function setPageTitle() {
-    if (localStorage.getItem('pageTitle')) {
-        document.title = localStorage.getItem('pageTitle');
-    }
-}
-
-function generateRandomAvatarSeed(): string {
-    const randomPart = Math.random().toString(36).slice(2, 10);
-    const timestampPart = Date.now().toString(36).slice(-6);
-    return `${randomPart}${timestampPart}`;
-}
-
-function setDynamicProfileAvatars(): void {
-    const avatarSeed = generateRandomAvatarSeed();
-    const avatarUrl = `https://api.dicebear.com/7.x/pixel-art/svg?seed=${avatarSeed}&backgroundColor=ffffff`;
-    const avatarImages = document.querySelectorAll<HTMLImageElement>('.dynamic-dicebear-avatar');
-    avatarImages.forEach((img) => {
-        img.src = avatarUrl;
-    });
-}
 
 window.addEventListener("hashchange", () => {
     clearPost();
@@ -2179,199 +1280,27 @@ profileButton.addEventListener('click', () => {
 })
 
 
+const inputBox = document.querySelector(".search") as HTMLInputElement;
+const searchResultsElement: HTMLElement = strictQuerySelector('.search-results');
+const searchController = createSubredditSearchController({
+    redditBaseURL,
+    searchResultsElement,
+    trackEvent,
+    getAnalyticsContext
+});
+
 document.addEventListener('click', function handleClickOutsideBox(event) {
     const searchResults = document.querySelector('.search-results') as HTMLElement;
     let target = event.target as Node;
-
-    // hdie search results/open menus if user clicks out of it
-	if (!searchResults.contains(target)) {hideSearchResults()}
+    if (!searchResults.contains(target)) {
+        searchController.hideSearchResults();
+    }
 });
-
-
-
-let inputBox = document.querySelector(".search") as HTMLInputElement;
-const searchResultsElement: HTMLElement = strictQuerySelector('.search-results');
-type SearchSubredditRecord = {
-    subreddit: string;
-    subredditLower: string;
-    members: number;
-    icon: string;
-    isNSFW: boolean;
-}
-
-let indexedSubredditsCache: SearchSubredditRecord[] | null = null;
-let indexedSubredditsPromise: Promise<SearchSubredditRecord[]> | null = null;
-const remoteSearchCache = new Map<string, SearchSubredditRecord[]>();
-let latestSearchToken = 0;
-
-async function getIndexedSubreddits(): Promise<SearchSubredditRecord[]> {
-    if (indexedSubredditsCache !== null) {
-        return indexedSubredditsCache;
-    }
-    if (indexedSubredditsPromise !== null) {
-        return indexedSubredditsPromise;
-    }
-
-    indexedSubredditsPromise = import(/* webpackChunkName: "subreddit-list" */ "./subredditList").then((module) => {
-        const indexed = module.subreddits.map((subredditData) => ({
-            subreddit: subredditData.subreddit,
-            subredditLower: subredditData.subreddit.toLowerCase(),
-            members: parseInt(subredditData.members, 10) || 0,
-            icon: subredditData.icon,
-            isNSFW: false,
-        }));
-        indexedSubredditsCache = indexed;
-        indexedSubredditsPromise = null;
-        return indexed;
-    });
-
-    return indexedSubredditsPromise;
-}
-
-async function fetchRemoteSubredditSearch(query: string, limit: number = 5): Promise<SearchSubredditRecord[] | null> {
-    const cached = remoteSearchCache.get(query);
-    if (cached !== undefined) {
-        return cached;
-    }
-
-    try {
-        const searchUrl = `${redditBaseURL}/subreddits/search.json?limit=${limit}&include_over_18=on&q=${encodeURIComponent(query)}`;
-        const payload = await fetchData<{ data?: { children?: Array<{ data?: SubredditDetails }> } }>(searchUrl);
-        const children = payload?.data?.children || [];
-        const results: SearchSubredditRecord[] = [];
-        const seen = new Set<string>();
-        for (const child of children) {
-            const details = child?.data;
-            if (!details || typeof details.display_name !== "string" || details.display_name.length === 0) {
-                continue;
-            }
-            const subredditLower = details.display_name.toLowerCase();
-            if (seen.has(subredditLower)) {
-                continue;
-            }
-            seen.add(subredditLower);
-            const rawIcon = getSubredditIcon(details);
-            results.push({
-                subreddit: details.display_name,
-                subredditLower,
-                members: details.subscribers || 0,
-                icon: typeof rawIcon === "string" && rawIcon.length > 0
-                    ? rawIcon
-                    : 'https://img.icons8.com/fluency-systems-regular/512/reddit.png',
-                isNSFW: details.over18 === true,
-            });
-            if (results.length >= limit) {
-                break;
-            }
-        }
-        remoteSearchCache.set(query, results);
-        return results;
-    } catch (_) {
-        return null;
-    }
-}
-
-async function runSubredditSearch(rawInput: string): Promise<void> {
-    const searchToken = ++latestSearchToken;
-    const normalized = rawInput.toLowerCase();
-    if (normalized.length === 0) {
-        hideSearchResults();
-        return;
-    }
-
-    const query = normalized.startsWith('r/') ? normalized.slice(2) : normalized;
-    if (query.length === 0) {
-        hideSearchResults();
-        return;
-    }
-
-    const remoteResults = await fetchRemoteSubredditSearch(query, 5);
-    if (searchToken !== latestSearchToken) {
-        return;
-    }
-
-    if (remoteResults !== null && remoteResults.length > 0) {
-        displaySearchResults(remoteResults);
-        return;
-    }
-
-    // Backup mode: local static list when remote search is empty/unavailable.
-    const indexedSubreddits = await getIndexedSubreddits();
-    if (searchToken !== latestSearchToken) {
-        return;
-    }
-
-    const fallbackResults: SearchSubredditRecord[] = [];
-    for (const sub of indexedSubreddits) {
-        if (!sub.subredditLower.includes(query)) {
-            continue;
-        }
-        fallbackResults.push(sub);
-        if (fallbackResults.length >= 5) {
-            break;
-        }
-    }
-
-    displaySearchResults(fallbackResults);
-}
-
-const debouncedRunSubredditSearch = debounce(runSubredditSearch, 120);
 
 if (subredditName) {
     subredditName.addEventListener('input', function() {
-        debouncedRunSubredditSearch(inputBox.value);
+        searchController.debouncedRunSubredditSearch(inputBox.value);
   });
-}
-
-function displaySearchResults(results) {
-    searchResultsElement.style.display = 'block';
-    searchResultsElement.innerHTML = '';
-    const fragment = document.createDocumentFragment();
-
-    for (const result of results) {
-        const link = document.createElement('a');
-        link.href = `#/r/${result.subreddit}`;
-        link.classList.add('search-result-link');
-        link.addEventListener('click', () => {
-            trackEvent("search_subreddit", {
-                ...getAnalyticsContext(),
-                results_count: results.length,
-                used_suggestion: true
-            });
-            hideSearchResults();
-        });
-
-        const item = document.createElement('div');
-        item.classList.add('search-result-item');
-
-        const icon = document.createElement('img');
-        icon.src = result.icon;
-        icon.classList.add('search-subreddit-icon');
-
-        const info = document.createElement('div');
-        info.classList.add('search-result-item-info');
-
-        const name = document.createElement('div');
-        name.classList.add('search-result-subreddit-name');
-        name.textContent = `r/${result.subreddit}`;
-        if (result.isNSFW) {
-            const nsfwBadge = document.createElement('span');
-            nsfwBadge.classList.add('search-result-nsfw-badge');
-            nsfwBadge.textContent = 'NSFW';
-            name.append(nsfwBadge);
-        }
-
-        const members = document.createElement('div');
-        members.classList.add('search-result-subreddit-info');
-        members.textContent = `Community • ${numberFormatter(result.members)} members`;
-
-        info.append(name, members);
-        item.append(icon, info);
-        link.append(item);
-        fragment.append(link);
-    }
-
-    searchResultsElement.append(fragment);
 }
 
 let addSubreddit = document.querySelector('.add-subreddit-button') as HTMLElement;
@@ -2383,32 +1312,15 @@ if (addSubreddit) {
 }
 
 
-function hideSearchResults() {
-    searchResultsElement.style.display = 'none';
-}
-
-function prefetchSearchIndexOnIdle(): void {
-    if (indexedSubredditsCache !== null || indexedSubredditsPromise !== null) {
-        return;
-    }
-    getIndexedSubreddits().catch(() => {
-        // Non-critical optimization; ignore prefetch failures.
-    });
-}
-
-function numberFormatter(number) {
-	let num = parseInt(number)
-    return Math.abs(num) > 999999 ? Math.sign(num)*Number((Math.abs(num)/1000000).toFixed(1)) + 'm' : Math.sign(num)*Number((Math.abs(num)/1000).toFixed(1)) + 'k'
-}
-
-setDarkMode();  
-showSubredditDetails();
-showLongAddress();
-setDefaultSubredditSortUI();
-setDefaultCommentSortUI();
+applyDarkModeSetting(checkbox);
+applyShowSubredditDetailsSetting(checkbox2);
+applyShowLongAddressSetting(checkbox3);
+applyDefaultSubredditSortUI(defaultSubredditSortSelect, defaultSubredditTopTimeSelect, getDefaultSubredditSort, getDefaultSubredditTopTime);
+applyTopTimeVisibility(defaultSubredditSortSelect, defaultSubredditTopTimeContainer, defaultSubredditTopTimeSelect);
+applyDefaultCommentSortUI(defaultCommentSortSelect, getDefaultCommentSort);
 applySavedTheme();
 setDisplayDensity();
-hideMedia();
+applyHideMediaSetting(checkbox4);
 setPageTitle();
 setDynamicProfileAvatars();
 
@@ -2429,11 +1341,11 @@ showRedditPageOrDefault(permalink);
 
 if (typeof (window as any).requestIdleCallback === "function") {
     (window as any).requestIdleCallback(() => {
-        prefetchSearchIndexOnIdle();
+        searchController.prefetchSearchIndexOnIdle();
     }, {timeout: 2500});
 } else {
     setTimeout(() => {
-        prefetchSearchIndexOnIdle();
+        searchController.prefetchSearchIndexOnIdle();
     }, 1200);
 }
 
