@@ -648,10 +648,11 @@ type CommentBuilderOptions = {
     indent: number, 
     ppBuffer: HTMLImageElement[], 
     post: Permalink,
+    postAuthor: string,
     commentsEncounteredSoFar: Set<string>    
 };
 
-function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],  {post, indent=0, ppBuffer=[], commentsEncounteredSoFar=new Set()}: CommentBuilderOptions) {
+function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],  {post, postAuthor, indent=0, ppBuffer=[], commentsEncounteredSoFar=new Set()}: CommentBuilderOptions) {
     if (listing.length === 0) {
         return;
     }
@@ -669,7 +670,7 @@ function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],
             }
 
             parentElement.appendChild(commentElement);
-            const prom: Promise<HTMLElement> = createComment(comment, {ppBuffer: ppBuffer, domNode: commentElement});
+            const prom: Promise<HTMLElement> = createComment(comment, {ppBuffer: ppBuffer, domNode: commentElement, postAuthor});
             prom.catch( (reason) => {
                 console.error("There was a problem drawing this comment on the page", {"reason":reason, "comment data": comment, "profile picture": ppBuffer, "anchor element on the page=": commentElement});
             })
@@ -679,6 +680,7 @@ function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],
                     indent: indent + 10, 
                     ppBuffer: ppBuffer,
                     post: post,
+                    postAuthor,
                     commentsEncounteredSoFar
                 });
             }
@@ -719,6 +721,7 @@ function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],
                         indent: indent + 10,
                         ppBuffer: ppBuffer,
                         post: post,
+                        postAuthor,
                         commentsEncounteredSoFar
                     });
                 } catch (e) {
@@ -731,12 +734,12 @@ function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],
     }
 }
 
-function displayComments(commentsData, {post}: {post: Permalink}) {
+function displayComments(commentsData, {post, postAuthor}: {post: Permalink, postAuthor: string}) {
     postSection.classList.add('post-selected');
     postSection.classList.remove('deselected');
 
     const stableInTimeFaceBuffer = facesSideLoader.getFaces().slice(0); // Stable-in-time copy of the full array
-    displayCommentsRecursive(postSection, commentsData, { indent: 0, ppBuffer: stableInTimeFaceBuffer, post: post, commentsEncounteredSoFar: new Set()});
+    displayCommentsRecursive(postSection, commentsData, { indent: 0, ppBuffer: stableInTimeFaceBuffer, post: post, postAuthor, commentsEncounteredSoFar: new Set()});
 }
 
 let sortButton = document.querySelector('.post-header-button.sort') as HTMLElement;
@@ -1122,7 +1125,7 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
     postSection.appendChild(sortSelect);
     postSection.append(document.createElement('hr'));
 
-    displayComments(comments, { post: post.data.permalink });
+    displayComments(comments, { post: post.data.permalink, postAuthor: post.data.author });
 }
 
 document.body.addEventListener('keydown', (event) => {
@@ -1281,7 +1284,8 @@ async function createProfilePicture(commentData: SnooComment, size: number = 50,
 
 type CreateCommentOptions = {
     ppBuffer: HTMLImageElement[],
-    domNode?: HTMLElement
+    domNode?: HTMLElement,
+    postAuthor?: string
 };
 async function createComment(commentData: SnooComment, options: CreateCommentOptions={ppBuffer: []}): Promise<HTMLElement> {
     if (options.domNode === undefined) {
@@ -1330,7 +1334,12 @@ async function createComment(commentData: SnooComment, options: CreateCommentOpt
         ];
         rng.randomUUID(format).then((uuid: UUID) => {
             const slicedUUID = uuid.slice(scoreLength); // Remove a bunch of letters from the start
-            const ownerCrown = commentData.data.is_submitter ? ' <span class="op-crown">👑</span>' : '';
+            const isCommentByPostOwner = commentData.data.is_submitter
+                || (
+                    options.postAuthor !== undefined
+                    && commentData.data.author.toLowerCase() === options.postAuthor.toLowerCase()
+                );
+            const ownerCrown = isCommentByPostOwner ? ' <span class="op-crown">👑</span>' : '';
 
             // We overwrite the 1st section with the comment's score
             if (localStorage.getItem('showLongAddress') == 'true' || localStorage.getItem('showLongAddress') == null) {
