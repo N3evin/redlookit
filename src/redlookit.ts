@@ -240,6 +240,7 @@ function maybeLoadMorePostsOnScroll(): void {
 async function loadInitialSubredditPosts(query: ActiveSubredditQuery): Promise<void> {
     clearPostsList();
     strictQuerySelector<HTMLElement>('.post-header-button.sort').id = query.subreddit;
+    syncSubredditSortIndicator(query);
     resetSubredditPaging(query);
     subredditPagingState.isLoading = true;
     try {
@@ -929,6 +930,32 @@ topButton.addEventListener('click', function() {
         sortTopMenu.style.display = 'none';
     }
 })
+
+function syncSubredditSortIndicator({tab, sortType}: Pick<ActiveSubredditQuery, "tab" | "sortType">): void {
+    const sortButtons = document.querySelectorAll<HTMLElement>(".sort-button");
+    sortButtons.forEach((button) => {
+        button.classList.remove("active-sort");
+    });
+
+    const activeMainButton = document.querySelector<HTMLElement>(`.sort-button.${tab}`);
+    activeMainButton?.classList.add("active-sort");
+
+    if (tab !== "top") {
+        return;
+    }
+
+    const topSortTypeToClass: Record<string, string> = {
+        day: "today",
+        week: "week",
+        month: "month",
+        year: "year",
+        all: "all-time"
+    };
+    if (sortType !== null && sortType in topSortTypeToClass) {
+        const activeTopButton = document.querySelector<HTMLElement>(`.sort-button.${topSortTypeToClass[sortType]}`);
+        activeTopButton?.classList.add("active-sort");
+    }
+}
 
 // when adding a new theme in css, remember to add the theme class name to this list
 let themeNames=['defaultTheme', 'theme1', 'theme2', 'theme3', 'theme4', 'theme5', 

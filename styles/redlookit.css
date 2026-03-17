@@ -1324,6 +1324,13 @@ header {
     background-color: var(--background-color);
 }
 
+.sort-button.active-sort {
+    background-color: var(--background-color);
+    border-left: 3px solid var(--new-msg);
+    font-weight: 600;
+    padding-left: 27px;
+}
+
 
 .post-header-button {
     background-color: transparent;
