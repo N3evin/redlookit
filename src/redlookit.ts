@@ -1731,7 +1731,7 @@ function generateRandomAvatarSeed(): string {
 
 function setDynamicProfileAvatars(): void {
     const avatarSeed = generateRandomAvatarSeed();
-    const avatarUrl = `https://api.dicebear.com/7.x/pixel-art/svg?seed=${avatarSeed}`;
+    const avatarUrl = `https://api.dicebear.com/7.x/pixel-art/svg?seed=${avatarSeed}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`;
     const avatarImages = document.querySelectorAll<HTMLImageElement>('.dynamic-dicebear-avatar');
     avatarImages.forEach((img) => {
         img.src = avatarUrl;
