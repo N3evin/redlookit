@@ -463,6 +463,10 @@ button {
     margin-right: 10px;
 }
 
+.op-crown {
+    margin-left: 4px;
+}
+
 .usertext h6 {
     text-decoration: underline;
 }

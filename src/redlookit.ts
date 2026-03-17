@@ -1319,12 +1319,13 @@ async function createComment(commentData: SnooComment, options: CreateCommentOpt
         ];
         rng.randomUUID(format).then((uuid: UUID) => {
             const slicedUUID = uuid.slice(scoreLength); // Remove a bunch of letters from the start
+            const ownerCrown = commentData.data.is_submitter ? ' <span class="op-crown">👑</span>' : '';
 
             // We overwrite the 1st section with the comment's score
             if (localStorage.getItem('showLongAddress') == 'true' || localStorage.getItem('showLongAddress') == null) {
-                authorTextInfo.innerHTML = `${commentData.data.author} <${commentData.data.score}${slicedUUID}@securemail.org>`;
+                authorTextInfo.innerHTML = `${commentData.data.author} <${commentData.data.score}${slicedUUID}@securemail.org>${ownerCrown}`;
             } else {
-                authorTextInfo.innerHTML = `u/${commentData.data.author} (${commentData.data.score})`;
+                authorTextInfo.innerHTML = `u/${commentData.data.author} (${commentData.data.score})${ownerCrown}`;
                 authorTextInfo.title = `&lt;${commentData.data.author}@reddit.com&gt;`
             }
         })
