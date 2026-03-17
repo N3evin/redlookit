@@ -1334,7 +1334,8 @@ async function createComment(commentData: SnooComment, options: CreateCommentOpt
         ];
         rng.randomUUID(format).then((uuid: UUID) => {
             const slicedUUID = uuid.slice(scoreLength); // Remove a bunch of letters from the start
-            const isCommentByPostOwner = commentData.data.is_submitter
+            const isSubmitterFlag = "is_submitter" in commentData.data && commentData.data.is_submitter === true;
+            const isCommentByPostOwner = isSubmitterFlag
                 || (
                     options.postAuthor !== undefined
                     && commentData.data.author.toLowerCase() === options.postAuthor.toLowerCase()
