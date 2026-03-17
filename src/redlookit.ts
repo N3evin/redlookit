@@ -698,10 +698,91 @@ type CommentBuilderOptions = {
     ppBuffer: HTMLImageElement[], 
     post: Permalink,
     postAuthor: string,
+    collapsedCommentsSet: Set<string>,
     commentsEncounteredSoFar: Set<string>    
 };
 
-function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],  {post, postAuthor, indent=0, ppBuffer=[], commentsEncounteredSoFar=new Set()}: CommentBuilderOptions) {
+const collapsedCommentsStorageKey = "collapsedCommentsByPost";
+type CollapsedCommentsByPost = Record<string, string[]>;
+
+function loadCollapsedCommentsMap(): CollapsedCommentsByPost {
+    const rawStorage = localStorage.getItem(collapsedCommentsStorageKey);
+    if (rawStorage === null) {
+        return {};
+    }
+    try {
+        const parsedStorage = JSON.parse(rawStorage);
+        if (typeof parsedStorage !== "object" || parsedStorage === null || Array.isArray(parsedStorage)) {
+            return {};
+        }
+        const safeCollapsedMap: CollapsedCommentsByPost = {};
+        for (const [postPermalink, commentIds] of Object.entries(parsedStorage as Record<string, unknown>)) {
+            if (!Array.isArray(commentIds)) {
+                continue;
+            }
+            safeCollapsedMap[postPermalink] = commentIds
+                .filter((commentId) => typeof commentId === "string" && commentId.length > 0);
+        }
+        return safeCollapsedMap;
+    } catch (_) {
+        return {};
+    }
+}
+
+function loadCollapsedCommentsForPost(postPermalink: Permalink): Set<string> {
+    const collapsedMap = loadCollapsedCommentsMap();
+    return new Set(collapsedMap[postPermalink] ?? []);
+}
+
+function saveCollapsedCommentsForPost(postPermalink: Permalink, collapsedCommentIds: Set<string>): void {
+    const collapsedMap = loadCollapsedCommentsMap();
+    if (collapsedCommentIds.size === 0) {
+        delete collapsedMap[postPermalink];
+    } else {
+        collapsedMap[postPermalink] = Array.from(collapsedCommentIds);
+    }
+    localStorage.setItem(collapsedCommentsStorageKey, JSON.stringify(collapsedMap));
+}
+
+function getHiddenRepliesCount(commentElement: HTMLElement): number {
+    return Math.max(0, commentElement.querySelectorAll(".usertext").length - 1);
+}
+
+function setCommentCollapsedState(commentElement: HTMLElement, shouldCollapse: boolean): void {
+    commentElement.classList.toggle("comment-thread-collapsed", shouldCollapse);
+    const collapseButton = commentElement.querySelector<HTMLButtonElement>(".comment-collapse-toggle");
+    if (collapseButton !== null) {
+        collapseButton.textContent = shouldCollapse ? "▸" : "▾";
+        collapseButton.title = shouldCollapse ? "Expand thread" : "Collapse thread";
+        collapseButton.setAttribute("aria-label", shouldCollapse ? "Expand comment thread" : "Collapse comment thread");
+        collapseButton.setAttribute("aria-expanded", shouldCollapse ? "false" : "true");
+    }
+    const collapsedSummary = commentElement.querySelector<HTMLElement>(".comment-collapsed-summary");
+    if (collapsedSummary !== null) {
+        if (!shouldCollapse) {
+            collapsedSummary.style.display = "none";
+            collapsedSummary.textContent = "";
+        } else {
+            const hiddenReplies = getHiddenRepliesCount(commentElement);
+            collapsedSummary.style.display = "inline";
+            collapsedSummary.textContent = hiddenReplies > 0
+                ? `${hiddenReplies} repl${hiddenReplies === 1 ? "y" : "ies"} hidden`
+                : "Thread collapsed";
+        }
+    }
+}
+
+function refreshCollapsedCommentAncestors(startElement: HTMLElement): void {
+    let currentElement: HTMLElement | null = startElement;
+    while (currentElement !== null && currentElement !== postSection) {
+        if (currentElement.classList.contains("usertext") && currentElement.classList.contains("comment-thread-collapsed")) {
+            setCommentCollapsedState(currentElement, true);
+        }
+        currentElement = currentElement.parentElement;
+    }
+}
+
+function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],  {post, postAuthor, collapsedCommentsSet, indent=0, ppBuffer=[], commentsEncounteredSoFar=new Set()}: CommentBuilderOptions) {
     if (listing.length === 0) {
         return;
     }
@@ -717,9 +798,18 @@ function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],
             if (indent > 0) {
                 commentElement.classList.add('replied-comment');
             }
+            if (collapsedCommentsSet.has(comment.data.id)) {
+                commentElement.classList.add("comment-thread-collapsed");
+            }
 
             parentElement.appendChild(commentElement);
-            const prom: Promise<HTMLElement> = createComment(comment, {ppBuffer: ppBuffer, domNode: commentElement, postAuthor});
+            const prom: Promise<HTMLElement> = createComment(comment, {
+                ppBuffer: ppBuffer,
+                domNode: commentElement,
+                postAuthor,
+                postPermalink: post,
+                collapsedCommentsSet
+            });
             prom.catch( (reason) => {
                 console.error("There was a problem drawing this comment on the page", {"reason":reason, "comment data": comment, "profile picture": ppBuffer, "anchor element on the page=": commentElement});
             })
@@ -730,9 +820,14 @@ function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],
                     ppBuffer: ppBuffer,
                     post: post,
                     postAuthor,
+                    collapsedCommentsSet,
                     commentsEncounteredSoFar
                 });
             }
+            if (commentElement.classList.contains("comment-thread-collapsed")) {
+                setCommentCollapsedState(commentElement, true);
+            }
+            refreshCollapsedCommentAncestors(parentElement);
 
             if (indent === 0) {
                 parentElement.appendChild(document.createElement('hr'));
@@ -771,8 +866,10 @@ function displayCommentsRecursive(parentElement: HTMLElement, listing: ApiObj[],
                         ppBuffer: ppBuffer,
                         post: post,
                         postAuthor,
+                        collapsedCommentsSet,
                         commentsEncounteredSoFar
                     });
+                    refreshCollapsedCommentAncestors(parentElement);
                 } catch (e) {
                     moreElement.classList.remove("waiting");
                     console.error(e);
@@ -788,7 +885,8 @@ function displayComments(commentsData, {post, postAuthor}: {post: Permalink, pos
     postSection.classList.remove('deselected');
 
     const stableInTimeFaceBuffer = facesSideLoader.getFaces().slice(0); // Stable-in-time copy of the full array
-    displayCommentsRecursive(postSection, commentsData, { indent: 0, ppBuffer: stableInTimeFaceBuffer, post: post, postAuthor, commentsEncounteredSoFar: new Set()});
+    const collapsedCommentsSet = loadCollapsedCommentsForPost(post);
+    displayCommentsRecursive(postSection, commentsData, { indent: 0, ppBuffer: stableInTimeFaceBuffer, post: post, postAuthor, collapsedCommentsSet, commentsEncounteredSoFar: new Set()});
 }
 
 let sortButton = document.querySelector('.post-header-button.sort') as HTMLElement;
@@ -1334,7 +1432,9 @@ async function createProfilePicture(commentData: SnooComment, size: number = 50,
 type CreateCommentOptions = {
     ppBuffer: HTMLImageElement[],
     domNode?: HTMLElement,
-    postAuthor?: string
+    postAuthor?: string,
+    postPermalink?: Permalink,
+    collapsedCommentsSet?: Set<string>
 };
 async function createComment(commentData: SnooComment, options: CreateCommentOptions={ppBuffer: []}): Promise<HTMLElement> {
     if (options.domNode === undefined) {
@@ -1346,7 +1446,26 @@ async function createComment(commentData: SnooComment, options: CreateCommentOpt
     // Author parent div
     const author = document.createElement('div');
     author.classList.add("author")
+    author.classList.add("comment-header");
     author.style.display = "flex";
+
+    const collapseToggle = document.createElement("button");
+    collapseToggle.type = "button";
+    collapseToggle.classList.add("comment-collapse-toggle");
+    collapseToggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const willCollapse = !options.domNode.classList.contains("comment-thread-collapsed");
+        setCommentCollapsedState(options.domNode, willCollapse);
+        if (options.collapsedCommentsSet !== undefined && options.postPermalink !== undefined) {
+            if (willCollapse) {
+                options.collapsedCommentsSet.add(commentData.data.id);
+            } else {
+                options.collapsedCommentsSet.delete(commentData.data.id);
+            }
+            saveCollapsedCommentsForPost(options.postPermalink, options.collapsedCommentsSet);
+        }
+    });
+    author.append(collapseToggle);
 
     await rng.setSeed(commentData.data.author);
     
@@ -1411,12 +1530,29 @@ async function createComment(commentData: SnooComment, options: CreateCommentOpt
         authorText.append(dateDiv);
     }
     author.append(authorText);
+    const collapsedSummary = document.createElement("span");
+    collapsedSummary.classList.add("comment-collapsed-summary");
+    collapsedSummary.style.display = "none";
+    author.append(collapsedSummary);
 
     const commentText = document.createElement('div');
     commentText.classList.add("comment");
     commentText.insertAdjacentHTML('beforeend', embedRedditImages(decodeHTML(commentData.data.body_html)));
 
     options.domNode.prepend(author, commentText);
+    setCommentCollapsedState(options.domNode, options.domNode.classList.contains("comment-thread-collapsed"));
+    author.addEventListener("click", () => {
+        const willCollapse = !options.domNode.classList.contains("comment-thread-collapsed");
+        setCommentCollapsedState(options.domNode, willCollapse);
+        if (options.collapsedCommentsSet !== undefined && options.postPermalink !== undefined) {
+            if (willCollapse) {
+                options.collapsedCommentsSet.add(commentData.data.id);
+            } else {
+                options.collapsedCommentsSet.delete(commentData.data.id);
+            }
+            saveCollapsedCommentsForPost(options.postPermalink, options.collapsedCommentsSet);
+        }
+    });
     return options.domNode
 }
 

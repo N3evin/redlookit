@@ -75,11 +75,12 @@ PS: If you have a better name, please let me know 🙏
 - [x] Sorting Comments
 - [x] Infinite Scroll
 - [x] Crown on comment to denote is owner of post commenting
+- [x] Default Post Sorting Option in Settings
 - [x] Default Comment Sorting Option in Settings
+- [x] Collapsible Comment Threads
 - [ ] Keyboard Shortcut Panel
 - [ ] Redesign Settings Panel
 - [ ] Help/Info Panel
-- [ ] Collapsible Comment Threads
 - [ ] Better Mobile Responsive Layout
 - [ ] Log in Authentication
 

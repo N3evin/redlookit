@@ -737,6 +737,45 @@ button {
     padding-right: 10px;
 }
 
+.comment-header {
+    align-items: flex-start;
+    cursor: pointer;
+}
+
+.comment-collapse-toggle {
+    border: 1px solid var(--border-color-2);
+    background: var(--background-color-2);
+    color: var(--text-color);
+    border-radius: 4px;
+    width: 22px;
+    height: 22px;
+    margin-right: 8px;
+    margin-top: 2px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0;
+}
+
+.comment-collapse-toggle:hover {
+    background: var(--border-color-2);
+}
+
+.comment-thread-collapsed {
+    opacity: 0.95;
+}
+
+.comment-thread-collapsed > :not(.author) {
+    display: none !important;
+}
+
+.comment-collapsed-summary {
+    color: var(--border-color);
+    font-size: 0.85em;
+    margin-left: 10px;
+    align-self: center;
+}
+
 .btn-more {
     cursor: pointer;
     margin-left: 10px;
