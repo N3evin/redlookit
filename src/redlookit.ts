@@ -1225,7 +1225,7 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
     const title = document.createElement('h4')
     const titleLink = document.createElement('a');
     title.appendChild(titleLink);
-    const titleText = post.data.title
+    const titleText = decodeHTML(post.data.title);
     titleLink.href = `${redditBaseURL}${post.data.permalink}`;
     titleLink.append(titleText);
     title.classList.add('post-section-title');
