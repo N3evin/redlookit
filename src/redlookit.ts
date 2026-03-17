@@ -608,9 +608,9 @@ function displayPosts(responses: Post[], subreddit, subredditInformation: Subred
         section.classList.add('post');
 
         let title = document.createElement('span');
-        let titleText = response.data.title;
+        let titleText = decodeHTML(response.data.title);
         title.append(titleText);
-        section.title = response.data.title;
+        section.title = titleText;
         title.classList.add('title');
 
         let subreddit = document.createElement('span');
