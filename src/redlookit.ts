@@ -1723,6 +1723,21 @@ function setPageTitle() {
     }
 }
 
+function generateRandomAvatarSeed(): string {
+    const randomPart = Math.random().toString(36).slice(2, 10);
+    const timestampPart = Date.now().toString(36).slice(-6);
+    return `${randomPart}${timestampPart}`;
+}
+
+function setDynamicProfileAvatars(): void {
+    const avatarSeed = generateRandomAvatarSeed();
+    const avatarUrl = `https://api.dicebear.com/7.x/pixel-art/svg?seed=${avatarSeed}`;
+    const avatarImages = document.querySelectorAll<HTMLImageElement>('.dynamic-dicebear-avatar');
+    avatarImages.forEach((img) => {
+        img.src = avatarUrl;
+    });
+}
+
 window.addEventListener("hashchange", () => {
     clearPost();
     const permalink = permalinkFromURLAnchor();
@@ -1976,6 +1991,7 @@ applySavedTheme();
 setDisplayDensity();
 hideMedia();
 setPageTitle();
+setDynamicProfileAvatars();
 
 // Everything set up.
 // We start actually doing things now
