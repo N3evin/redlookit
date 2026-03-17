@@ -56,6 +56,24 @@ const commentSortOptions = [
 ] as const;
 type CommentSortValue = typeof commentSortOptions[number]["value"];
 const defaultCommentSort: CommentSortValue = "top";
+const subredditSortOptions = [
+    { value: "hot", label: "Hot" },
+    { value: "new", label: "New" },
+    { value: "rising", label: "Rising" },
+    { value: "top", label: "Top" }
+] as const;
+type SubredditSortValue = typeof subredditSortOptions[number]["value"];
+const defaultSubredditSort: SubredditSortValue = "hot";
+const subredditTopTimeOptions = [
+    { value: "hour", label: "Hour" },
+    { value: "day", label: "Day" },
+    { value: "week", label: "Week" },
+    { value: "month", label: "Month" },
+    { value: "year", label: "Year" },
+    { value: "all", label: "All Time" }
+] as const;
+type SubredditTopTimeValue = typeof subredditTopTimeOptions[number]["value"];
+const defaultSubredditTopTime: SubredditTopTimeValue = "all";
 interface ActiveSubredditQuery {
     sortType: null | "all" | "hour" | "day" | "week" | "month" | "year"
     tab: "hot" | "new" | "rising" | "controversial" | "top" | "gilded"
@@ -305,12 +323,43 @@ function showRedditPageOrDefault(permalink: Permalink | null) {
 }
 
 async function showSubreddit(subreddit: string) {
+    const defaultSort = getDefaultSubredditPostSortQuery();
     await loadInitialSubredditPosts({
         subreddit,
-        tab: "hot",
-        sortType: null,
-        useBaseListingPath: true
+        tab: defaultSort.tab,
+        sortType: defaultSort.sortType,
+        useBaseListingPath: defaultSort.tab === "hot" && defaultSort.sortType === null
     });
+}
+
+function getDefaultSubredditSort(): SubredditSortValue {
+    const selectedSort = localStorage.getItem('defaultSubredditSort');
+    if (selectedSort !== null && subredditSortOptions.some((option) => option.value === selectedSort)) {
+        return selectedSort as SubredditSortValue;
+    }
+    return defaultSubredditSort;
+}
+
+function getDefaultSubredditTopTime(): SubredditTopTimeValue {
+    const selectedTopTime = localStorage.getItem('defaultSubredditTopTime');
+    if (selectedTopTime !== null && subredditTopTimeOptions.some((option) => option.value === selectedTopTime)) {
+        return selectedTopTime as SubredditTopTimeValue;
+    }
+    return defaultSubredditTopTime;
+}
+
+function getDefaultSubredditPostSortQuery(): Pick<ActiveSubredditQuery, "tab" | "sortType"> {
+    const tab = getDefaultSubredditSort();
+    if (tab === "top") {
+        return {
+            tab,
+            sortType: getDefaultSubredditTopTime()
+        };
+    }
+    return {
+        tab,
+        sortType: null
+    };
 }
 
 function getDefaultCommentSort(): CommentSortValue {
@@ -1623,6 +1672,42 @@ function showLongAddress() {
     }    
 }
 
+const defaultSubredditSortSelect: HTMLSelectElement = strictQuerySelector('#default-subreddit-sort');
+const defaultSubredditTopTimeContainer: HTMLElement = strictQuerySelector('#default-subreddit-top-time-container');
+function syncDefaultSubredditTopTimeVisibility(): void {
+    const showTopTime = defaultSubredditSortSelect.value === "top";
+    defaultSubredditTopTimeContainer.style.display = showTopTime ? "block" : "none";
+    defaultSubredditTopTimeSelect.disabled = !showTopTime;
+}
+
+defaultSubredditSortSelect.addEventListener('change', function() {
+    const selectedSort = defaultSubredditSortSelect.value;
+    if (subredditSortOptions.some((option) => option.value === selectedSort)) {
+        localStorage.setItem('defaultSubredditSort', selectedSort);
+    } else {
+        localStorage.setItem('defaultSubredditSort', defaultSubredditSort);
+        defaultSubredditSortSelect.value = defaultSubredditSort;
+    }
+    syncDefaultSubredditTopTimeVisibility();
+})
+
+const defaultSubredditTopTimeSelect: HTMLSelectElement = strictQuerySelector('#default-subreddit-top-time');
+defaultSubredditTopTimeSelect.addEventListener('change', function() {
+    const selectedTopTime = defaultSubredditTopTimeSelect.value;
+    if (subredditTopTimeOptions.some((option) => option.value === selectedTopTime)) {
+        localStorage.setItem('defaultSubredditTopTime', selectedTopTime);
+    } else {
+        localStorage.setItem('defaultSubredditTopTime', defaultSubredditTopTime);
+        defaultSubredditTopTimeSelect.value = defaultSubredditTopTime;
+    }
+})
+
+function setDefaultSubredditSortUI() {
+    defaultSubredditSortSelect.value = getDefaultSubredditSort();
+    defaultSubredditTopTimeSelect.value = getDefaultSubredditTopTime();
+    syncDefaultSubredditTopTimeVisibility();
+}
+
 const defaultCommentSortSelect: HTMLSelectElement = strictQuerySelector('#default-comment-sort');
 defaultCommentSortSelect.addEventListener('change', function() {
     const selectedSort = defaultCommentSortSelect.value;
@@ -1986,6 +2071,7 @@ function numberFormatter(number) {
 setDarkMode();  
 showSubredditDetails();
 showLongAddress();
+setDefaultSubredditSortUI();
 setDefaultCommentSortUI();
 applySavedTheme();
 setDisplayDensity();
