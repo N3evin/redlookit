@@ -22,6 +22,7 @@ export function createSubredditSearchController(deps: SearchDeps) {
     let indexedSubredditsPromise: Promise<SearchSubredditRecord[]> | null = null;
     const remoteSearchCache = new Map<string, SearchSubredditRecord[]>();
     let latestSearchToken = 0;
+    const noResultsTrackedQueries = new Set<string>();
 
     async function getIndexedSubreddits(): Promise<SearchSubredditRecord[]> {
         if (indexedSubredditsCache !== null) {
@@ -92,6 +93,7 @@ export function createSubredditSearchController(deps: SearchDeps) {
 
     function hideSearchResults(): void {
         deps.searchResultsElement.style.display = 'none';
+        noResultsTrackedQueries.clear();
     }
 
     function displaySearchResults(results: SearchSubredditRecord[]): void {
@@ -99,7 +101,7 @@ export function createSubredditSearchController(deps: SearchDeps) {
         deps.searchResultsElement.innerHTML = '';
         const fragment = document.createDocumentFragment();
 
-        for (const result of results) {
+        for (const [index, result] of results.entries()) {
             const link = document.createElement('a');
             link.href = `#/r/${result.subreddit}`;
             link.classList.add('search-result-link');
@@ -107,7 +109,14 @@ export function createSubredditSearchController(deps: SearchDeps) {
                 deps.trackEvent("search_subreddit", {
                     ...deps.getAnalyticsContext(),
                     results_count: results.length,
-                    used_suggestion: true
+                    used_suggestion: true,
+                    selected_subreddit: result.subreddit.toLowerCase()
+                });
+                deps.trackEvent("search_result_click_position", {
+                    ...deps.getAnalyticsContext(),
+                    selected_subreddit: result.subreddit.toLowerCase(),
+                    result_position: index + 1,
+                    results_count: results.length
                 });
                 hideSearchResults();
             });
@@ -185,6 +194,15 @@ export function createSubredditSearchController(deps: SearchDeps) {
             }
         }
 
+        if (fallbackResults.length === 0 && !noResultsTrackedQueries.has(query)) {
+            noResultsTrackedQueries.add(query);
+            deps.trackEvent("search_no_results", {
+                ...deps.getAnalyticsContext(),
+                query_length: query.length,
+                source_attempted: "remote_then_fallback",
+                remote_failed: remoteResults === null
+            });
+        }
         displaySearchResults(fallbackResults);
     }
 

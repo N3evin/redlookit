@@ -8,7 +8,7 @@ import {setVoteDisplay} from "./voteUtils";
 import {displayComments} from "./comments";
 import {getAnalyticsContext, trackEvent, trackRouteView, trackSettingChange} from "./analyticsUtils";
 import {decodeHTML, isHTMLElement, strictQuerySelector} from "./domQueryUtils";
-import {getPostIdFromPermalink, permalinkFromURLAnchor, removeTrailingSlash, setURLAnchor, type Permalink} from "./routingUtils";
+import {getPostIdFromPermalink, parsePermalinkForAnalytics, permalinkFromURLAnchor, removeTrailingSlash, setURLAnchor, type Permalink} from "./routingUtils";
 import {commentSortOptions, defaultCommentSort, defaultSubredditSort, defaultSubredditTopTime, getDefaultCommentSort, getDefaultSubredditPostSortQuery, getDefaultSubredditSort, getDefaultSubredditTopTime, getSavedSubredditSet, getSavedSubreddits, subredditSortOptions, subredditTopTimeOptions} from "./settingsStore";
 import {getSubredditIcon, numberFormatter} from "./subredditFormatUtils";
 import {createImage, embedRedditImages, getPostDetails, hasSelfText, isImage, isSelfPost, isValidAbsoluteImageURL} from "./postRendering";
@@ -54,12 +54,14 @@ const rng = new Random();
 const subredditPagingState: {
     query: ActiveSubredditQuery | null
     after: string | null
+    pageIndex: number
     isLoading: boolean
     hasMore: boolean
     subredditInformation: SubredditDetails | null
 } = {
     query: null,
     after: null,
+    pageIndex: 0,
     isLoading: false,
     hasMore: true,
     subredditInformation: null
@@ -119,6 +121,7 @@ function setLoadMoreIndicatorVisible(shouldShow: boolean): void {
 function resetSubredditPaging(query: ActiveSubredditQuery): void {
     subredditPagingState.query = query;
     subredditPagingState.after = null;
+    subredditPagingState.pageIndex = 0;
     subredditPagingState.isLoading = false;
     subredditPagingState.hasMore = true;
     subredditPagingState.subredditInformation = null;
@@ -158,6 +161,16 @@ async function loadMorePostsFromSubreddit(): Promise<void> {
             query.subreddit,
             subredditPagingState.subredditInformation === null ? undefined : subredditPagingState.subredditInformation
         );
+        if (posts.data.children.length > 0) {
+            subredditPagingState.pageIndex += 1;
+            trackEvent("load_more_posts", {
+                ...getAnalyticsContext(),
+                subreddit: query.subreddit.toLowerCase(),
+                tab: query.tab,
+                top_time: query.sortType ?? "none",
+                page_index: subredditPagingState.pageIndex
+            });
+        }
         applyPageResultToState(posts);
         maybeLoadMorePostsOnScroll();
     } catch (e) {
@@ -203,6 +216,7 @@ async function loadInitialSubredditPosts(query: ActiveSubredditQuery): Promise<v
             query.subreddit,
             subredditInformation === null ? undefined : subredditInformation
         );
+        subredditPagingState.pageIndex = posts.data.children.length > 0 ? 1 : 0;
         applyPageResultToState(posts);
         maybeLoadMorePostsOnScroll();
     } catch (e) {
@@ -801,6 +815,41 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
     
     const comments: SnooComment[] = response[1].data.children;
     const post: Post = response[0].data.children[0];
+    const postId = post.data.id ?? getPostIdFromPermalink(post.data.permalink);
+    const subredditName = post.data.subreddit.toLowerCase();
+
+    const trackExternalLink = (destinationUrl: string, surface: string, targetBlank: boolean): void => {
+        try {
+            const parsedDestination = new URL(destinationUrl, window.location.href);
+            trackEvent("open_external_link", {
+                ...getAnalyticsContext(),
+                post_id: postId,
+                subreddit: subredditName,
+                link_surface: surface,
+                destination_host: parsedDestination.host.toLowerCase(),
+                target_blank: targetBlank
+            });
+        } catch (_) {
+            return;
+        }
+    };
+
+    const trackMediaInteraction = (mediaType: "image" | "video", interactionType: "click" | "play" | "pause", mediaSurface: "post_media" | "selftext_embed", mediaUrl: string): void => {
+        try {
+            const parsedMedia = new URL(mediaUrl, window.location.href);
+            trackEvent("media_interaction", {
+                ...getAnalyticsContext(),
+                post_id: postId,
+                subreddit: subredditName,
+                media_type: mediaType,
+                interaction_type: interactionType,
+                media_surface: mediaSurface,
+                media_host: parsedMedia.host.toLowerCase()
+            });
+        } catch (_) {
+            return;
+        }
+    };
 
     // --- Comment Sort Dropdown ---
     const sortSelect = document.createElement("select");
@@ -835,6 +884,9 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
     const titleText = decodeHTML(post.data.title);
     titleLink.href = `${redditBaseURL}${post.data.permalink}`;
     titleLink.append(titleText);
+    titleLink.addEventListener("click", () => {
+        trackExternalLink(titleLink.href, "post_title", titleLink.target === "_blank");
+    });
     title.classList.add('post-section-title');
     postSection.append(title);
 
@@ -846,6 +898,9 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
         if (isDebugMode()) console.log("Post is image");
         const image = createImage(post.data.url_overridden_by_dest);
         if (image) {
+            image.addEventListener("click", () => {
+                trackMediaInteraction("image", "click", "post_media", image.src);
+            });
             container.append(image);
         }
     } 
@@ -871,6 +926,9 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
         link.innerText = titleText;
         link.target = "_blank";
         link.classList.add('post-link');
+        link.addEventListener("click", () => {
+            trackExternalLink(link.href, "post_link_row", link.target === "_blank");
+        });
         row.append(thumbnail);
         row.append(link);
         row.classList.add('post-link-container-row')
@@ -883,6 +941,23 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
         const selftext = document.createElement('div');
         selftext.innerHTML = selfpostHtml;
         selftext.classList.add("usertext");
+        selftext.addEventListener("click", (event) => {
+            const targetElement = event.target as HTMLElement | null;
+            if (targetElement === null) {
+                return;
+            }
+            const clickedLink = targetElement.closest("a");
+            if (clickedLink !== null) {
+                const anchor = clickedLink as HTMLAnchorElement;
+                trackExternalLink(anchor.href, "selftext", anchor.target === "_blank");
+                return;
+            }
+            const clickedImage = targetElement.closest("img.post-image");
+            if (clickedImage !== null) {
+                const img = clickedImage as HTMLImageElement;
+                trackMediaInteraction("image", "click", "selftext_embed", img.src);
+            }
+        });
     
         container.append(selftext);
     }
@@ -896,6 +971,12 @@ function showPostFromData(response: ApiObj, permalink?: Permalink, currentSort: 
         const source = document.createElement('source');
         source.src = post.data.secure_media.reddit_video.fallback_url;
         video.appendChild(source);
+        video.addEventListener("play", () => {
+            trackMediaInteraction("video", "play", "post_media", source.src);
+        });
+        video.addEventListener("pause", () => {
+            trackMediaInteraction("video", "pause", "post_media", source.src);
+        });
         if (!isMediaHidden()) {
             container.append(video);
         }
@@ -1338,6 +1419,34 @@ if (isDebugMode()) {
 const permalink = permalinkFromURLAnchor();
 trackRouteView(permalink);
 showRedditPageOrDefault(permalink);
+
+const sessionStartedAtMs = Date.now();
+let sessionEngagementSentForHiddenCycle = false;
+function trackSessionEngagement(trigger: "visibility_hidden" | "pagehide"): void {
+    if (sessionEngagementSentForHiddenCycle) {
+        return;
+    }
+    sessionEngagementSentForHiddenCycle = true;
+    const routeInfo = parsePermalinkForAnalytics(permalinkFromURLAnchor());
+    trackEvent("session_engagement", {
+        ...getAnalyticsContext(),
+        engagement_ms: Date.now() - sessionStartedAtMs,
+        route_type: routeInfo.route_type,
+        subreddit: routeInfo.subreddit,
+        post_id: routeInfo.post_id,
+        trigger
+    });
+}
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+        trackSessionEngagement("visibility_hidden");
+    } else if (document.visibilityState === "visible") {
+        sessionEngagementSentForHiddenCycle = false;
+    }
+});
+window.addEventListener("pagehide", () => {
+    trackSessionEngagement("pagehide");
+});
 
 if (typeof (window as any).requestIdleCallback === "function") {
     (window as any).requestIdleCallback(() => {

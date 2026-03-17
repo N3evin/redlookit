@@ -35,6 +35,17 @@ export function trackEvent(eventName: string, params: AnalyticsParams = {}): voi
     gtagFn("event", eventName, cleanParams);
 }
 
+export function trackSampledEvent(eventName: string, sampleRate: number, params: AnalyticsParams = {}): void {
+    const normalizedSampleRate = Math.min(1, Math.max(0, sampleRate));
+    if (normalizedSampleRate <= 0) {
+        return;
+    }
+    if (normalizedSampleRate < 1 && Math.random() > normalizedSampleRate) {
+        return;
+    }
+    trackEvent(eventName, params);
+}
+
 export function trackSettingChange(settingName: string, settingValue: string | boolean): void {
     trackEvent("change_setting", {
         ...getAnalyticsContext(),
