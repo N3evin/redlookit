@@ -592,6 +592,11 @@ function favoriteSubreddit(subreddit) {
     }
     subredditBtn.append('r/' + subreddit);
     subredditSection.append(subredditBtn);
+
+    const activeSubreddit = subredditPagingState.query?.subreddit?.toLowerCase();
+    if (activeSubreddit !== undefined && subreddit.toLowerCase() === activeSubreddit) {
+        syncActiveSidebarSubreddit(subreddit);
+    }
 }
 
 function unFavoriteSubreddit(subreddit) {
