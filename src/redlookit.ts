@@ -282,7 +282,28 @@ function showRedditPageOrDefault(permalink: Permalink | null) {
 
 }
 
+function syncActiveSidebarSubreddit(subredditInput: string): void {
+    const normalizedSubreddit = subredditInput.trim().toLowerCase().replace(/^r\//, "");
+    const allSidebarButtons = document.querySelectorAll<HTMLElement>('.menu-selector .collapses button, .menu-selector .subreddit.button');
+    allSidebarButtons.forEach((button) => {
+        button.classList.remove('selected');
+    });
+
+    if (normalizedSubreddit === "popular") {
+        document.querySelector<HTMLElement>('.menu-selector .inbox-button')?.classList.add('selected');
+        return;
+    }
+
+    const subredditButtons = document.querySelectorAll<HTMLButtonElement>('.menu-selector .subreddit.button');
+    subredditButtons.forEach((button) => {
+        if (button.id.toLowerCase() === normalizedSubreddit) {
+            button.classList.add('selected');
+        }
+    });
+}
+
 async function showSubreddit(subreddit: string) {
+    syncActiveSidebarSubreddit(subreddit);
     const defaultSort = getDefaultSubredditPostSortQuery();
     trackEvent("change_subreddit_sort", {
         ...getAnalyticsContext(),
@@ -1307,7 +1328,7 @@ if (spoilerTexts) {
     }
 }
 
-let sidebarButtons = document.querySelectorAll('.collapses button, .subreddit.button') as NodeListOf<HTMLElement>;
+let sidebarButtons = document.querySelectorAll('.menu-selector .collapses button, .menu-selector .subreddit.button') as NodeListOf<HTMLElement>;
 for (let sidebarButton of sidebarButtons) {
     sidebarButton.addEventListener('click', (event) => {
         event.stopPropagation();
